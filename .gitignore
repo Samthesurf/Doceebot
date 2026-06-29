@@ -1,0 +1,31 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Local Hermes planning state
+.hermes/
+
+# Local secrets and runtime state
+.env
+.env.*
+!.env.example
+storage/media/*
+storage/generated/*
+storage/templates/*
+!storage/media/.gitkeep
+!storage/generated/.gitkeep
+!storage/templates/.gitkeep
+
+# Test and tool caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
