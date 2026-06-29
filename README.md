@@ -16,6 +16,7 @@ A FastAPI based work logging assistant for WhatsApp and Telegram. Users send tex
 - Product plan: [`PRODUCT_PLAN.md`](PRODUCT_PLAN.md)
 - Current implementation status: [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md)
 - Local tunnel crash course: [`docs/TUNNELS.md`](docs/TUNNELS.md)
+- Telegram + Cloudflare setup: [`docs/TELEGRAM_CLOUDFLARE_SETUP.md`](docs/TELEGRAM_CLOUDFLARE_SETUP.md)
 
 ## Local setup
 
