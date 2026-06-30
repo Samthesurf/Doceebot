@@ -1,6 +1,6 @@
 # Implementation Status
 
-Last updated: 2026-06-29 22:34 WAT
+Last updated: 2026-06-30 15:49 WAT
 
 ## Completed
 
@@ -15,17 +15,20 @@ Last updated: 2026-06-29 22:34 WAT
 - Added initial modules for permissions, tenant scope, database models, media storage, RAG, LLM clients, document generation, and Celery workers.
 - Added deterministic DOCX and XLSX generator skeletons.
 - Added Docker Compose services for PostgreSQL and Redis.
+- Added Alembic configuration and the initial database schema migration.
+- Installed and started native local PostgreSQL for workstation development.
+- Applied the initial Alembic migration to the local `whatsapp_ai_agent` database.
 - Added tests for settings, health, timestamps, idempotency, Twilio parsing, and Telegram parsing.
-- Verified the scaffold with lint, tests, and a live local `/health` request.
+- Verified the scaffold with lint, tests, Alembic schema checks, and a live local `/health` request.
 
 ## Not done yet
 
 ### Phase 2: Database foundation
 
-- Alembic has not been initialized.
-- Database migrations have not been generated.
+- Alembic is initialized with an initial migration for the starter schema.
 - The SQLAlchemy models are still a starter skeleton.
 - Repositories are not complete.
+- The initial migration is applied to the local PostgreSQL database.
 - Duplicate message enforcement has not been tested against a real database.
 
 ### Phase 3A: Organization onboarding and tenant resolution
@@ -93,6 +96,9 @@ Last updated: 2026-06-29 22:34 WAT
 ```bash
 uv run ruff check .
 uv run pytest
+uv run alembic upgrade head
+uv run alembic check
+uv run alembic upgrade head --sql
 uv run uvicorn whatsapp_ai_agent.main:app --host 127.0.0.1 --port 8765
 curl http://127.0.0.1:8765/health
 ```
@@ -100,7 +106,10 @@ curl http://127.0.0.1:8765/health
 Latest results:
 
 - Ruff: passed.
-- Pytest: 18 passed, 1 warning.
+- Pytest: 20 passed, 1 warning.
+- Alembic online migration: applied revision `20260630_0001` to local PostgreSQL.
+- Alembic check: no new upgrade operations detected.
+- Alembic offline SQL generation: passed.
 - `/health`: returned HTTP 200 with status `ok`.
 
 ## Review fixes applied after independent review
@@ -118,7 +127,7 @@ Latest results:
 
 1. Configure Telegram credentials and test either polling or webhook mode.
 2. Choose a tunnel for local webhook testing.
-3. Implement database migrations and real persistence.
+3. Implement real message persistence on top of the local PostgreSQL database.
 4. Implement Telegram handlers and file download.
 5. Add tenant resolution before any LLM or RAG processing.
 6. Add AI context permission tests before any supervisor or manager features.

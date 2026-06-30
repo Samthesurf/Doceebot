@@ -32,8 +32,14 @@ Open `http://localhost:8000/health` to confirm the app is running.
 ## Local services
 
 ```bash
-docker compose up -d postgres redis
+sudo systemctl start postgresql
+uv run alembic upgrade head
 ```
+
+Docker Compose also defines PostgreSQL and Redis for environments where Docker is available.
+On this Arch workstation, native PostgreSQL is used for local database development.
+
+For the DigitalOcean VPS handoff, see `docs/DIGITALOCEAN_POSTGRES_ALEMBIC.md`.
 
 ## Required credentials before live channel testing
 
