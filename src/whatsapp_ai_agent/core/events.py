@@ -12,6 +12,10 @@ class MediaRef(BaseModel):
     filename: str | None = None
     size_bytes: int | None = None
     index: int = 0
+    storage_backend: str | None = None
+    storage_key: str | None = None
+    storage_url: str | None = None
+    sha256_hex: str | None = None
 
 
 class LocationRef(BaseModel):

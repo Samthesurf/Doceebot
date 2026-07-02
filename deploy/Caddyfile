@@ -1,0 +1,23 @@
+{
+	# Replace this with the deployment admin mailbox before production if desired.
+	# email admin@example.com
+}
+
+doceebot.name.ng {
+	encode zstd gzip
+
+	reverse_proxy 127.0.0.1:8000 {
+		header_up X-Real-IP {remote_host}
+	}
+
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+		-Server
+	}
+
+	log {
+		output file /var/log/caddy/doceebot.access.log
+		format console
+	}
+}

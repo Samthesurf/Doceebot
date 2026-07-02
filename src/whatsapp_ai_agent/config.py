@@ -40,11 +40,21 @@ class Settings(BaseSettings):
     gemini_api_key: str | None = None
     gemini_model: str = "gemini-3.1-flash-lite"
     deepseek_api_key: str | None = None
+    deepseek_base_url: str = "https://api.deepseek.com"
     deepseek_model: str = "deepseek-v4-flash"
 
+    cloudflare_api_base_url: str = "https://api.cloudflare.com/client/v4"
     cloudflare_account_id: str | None = None
     cloudflare_api_token: str | None = None
     cloudflare_r2_bucket: str | None = None
+    cloudflare_r2_public_base_url: str | None = None
+    cloudflare_r2_access_key_id: str | None = None
+    cloudflare_r2_secret_access_key: str | None = None
+    cloudflare_r2_endpoint_url: str | None = None
+    cloudflare_ai_search_instance: str | None = None
+    cloudflare_ai_search_namespace: str | None = None
+    cloudflare_ai_search_instance_prefix: str = "org"
+    cloudflare_ai_search_max_results: int = Field(default=8, ge=1, le=50)
     rag_backend: str = "cloudflare_ai_search"
     rag_embedding_model: str = "@cf/baai/bge-base-en-v1.5"
 
@@ -67,12 +77,26 @@ class Settings(BaseSettings):
     def is_development(self) -> bool:
         return self.app_env == "development"
 
+    @property
+    def r2_endpoint_url(self) -> str | None:
+        if self.cloudflare_r2_endpoint_url:
+            return self.cloudflare_r2_endpoint_url.rstrip("/")
+        if self.cloudflare_account_id:
+            return f"https://{self.cloudflare_account_id}.r2.cloudflarestorage.com"
+        return None
+
     @model_validator(mode="after")
     def validate_security_settings(self) -> "Settings":
         errors: list[str] = []
 
         if self.twilio_webhook_auth_enabled and self.twilio_auth_token in _PLACEHOLDER_VALUES:
             errors.append("TWILIO_AUTH_TOKEN is required when Twilio webhook auth is enabled")
+
+        if self.media_storage_backend == "r2":
+            if self.cloudflare_account_id in _PLACEHOLDER_VALUES:
+                errors.append("CLOUDFLARE_ACCOUNT_ID is required when MEDIA_STORAGE_BACKEND=r2")
+            if self.cloudflare_r2_bucket in _PLACEHOLDER_VALUES:
+                errors.append("CLOUDFLARE_R2_BUCKET is required when MEDIA_STORAGE_BACKEND=r2")
 
         if self.is_production:
             if self.secret_key in _PLACEHOLDER_VALUES:

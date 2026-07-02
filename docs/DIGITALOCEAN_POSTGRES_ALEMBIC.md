@@ -216,15 +216,27 @@ In another shell:
 curl -fsS http://127.0.0.1:8000/health
 ```
 
-## 7. Expose the app
+## 7. Expose the app with Caddy
 
-Use one of these approaches.
+Caddy is the preferred reverse proxy for Doceebot. The repository includes deployment templates:
 
-### Option A: Cloudflare DNS/proxy to VPS
+- `deploy/doceebot.service` for the FastAPI systemd service on `127.0.0.1:8000`.
+- `deploy/Caddyfile` for HTTPS reverse proxying from `doceebot.name.ng` to the local FastAPI service.
+- `docs/DIGITALOCEAN_CADDY_DEPLOYMENT.md` for the full Caddy deployment runbook.
 
-Point `doceebot.name.ng` to the droplet public IP in Cloudflare, then run a reverse proxy such as Caddy or Nginx from HTTPS to `127.0.0.1:8000`.
+Point `doceebot.name.ng` to the droplet in Cloudflare, then install Caddy and copy the checked-in Caddyfile:
 
-### Option B: Cloudflare Tunnel on VPS
+```bash
+sudo apt install -y caddy
+sudo cp /opt/doceebot/deploy/Caddyfile /etc/caddy/Caddyfile
+sudo caddy validate --config /etc/caddy/Caddyfile
+sudo systemctl reload caddy
+curl -fsS -H 'Host: doceebot.name.ng' http://127.0.0.1/health
+```
+
+If Cloudflare proxy mode blocks certificate issuance, temporarily set the DNS record to DNS-only until Caddy obtains its certificate, or use the Cloudflare DNS challenge with a Caddy build that includes the Cloudflare DNS provider.
+
+### Alternative: Cloudflare Tunnel on VPS
 
 Install `cloudflared`, create a new named tunnel on the VPS, route `doceebot.name.ng` to it, and point ingress to `http://localhost:8000`.
 

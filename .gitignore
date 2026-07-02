@@ -29,3 +29,6 @@ storage/templates/*
 .mypy_cache/
 .coverage
 htmlcov/
+
+# Generated manual pipeline artifacts
+/tmp_pipeline_artifacts/

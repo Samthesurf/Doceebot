@@ -67,3 +67,14 @@ def test_production_requires_telegram_webhook_secret():
 def test_twilio_auth_requires_token_when_enabled():
     with pytest.raises(ValidationError):
         Settings(twilio_webhook_auth_enabled=True, twilio_auth_token=None, _env_file=None)
+
+
+def test_r2_media_backend_requires_account_and_bucket():
+    with pytest.raises(ValidationError):
+        Settings(media_storage_backend="r2", cloudflare_account_id=None, _env_file=None)
+
+
+def test_cloudflare_r2_endpoint_defaults_from_account_id():
+    settings = Settings(cloudflare_account_id="account-1", _env_file=None)
+
+    assert settings.r2_endpoint_url == "https://account-1.r2.cloudflarestorage.com"

@@ -6,6 +6,11 @@ from whatsapp_ai_agent.config import Settings
 from whatsapp_ai_agent.core.events import InboundEvent
 from whatsapp_ai_agent.integrations.telegram import webhook
 
+TEXT_ACK = (
+    "I received your work update. I will turn it into a draft log "
+    "and ask for any missing details."
+)
+
 
 def make_event(**overrides: object) -> InboundEvent:
     values = {
@@ -26,9 +31,7 @@ def make_event(**overrides: object) -> InboundEvent:
 
 
 def test_build_acknowledgement_for_text_message():
-    assert webhook.build_acknowledgement(make_event()) == (
-        "Received your work update. I have parsed it and the AI logging step is next."
-    )
+    assert webhook.build_acknowledgement(make_event()) == TEXT_ACK
 
 
 @pytest.mark.asyncio
@@ -50,6 +53,6 @@ async def test_acknowledge_telegram_event_sends_text(monkeypatch):
     assert sent_messages == [
         {
             "chat_id": "1001",
-            "text": "Received your work update. I have parsed it and the AI logging step is next.",
+            "text": TEXT_ACK,
         }
     ]
