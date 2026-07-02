@@ -158,13 +158,24 @@ async def process_inbound_event(
     if db_session is not None:
         raw_message = RawInboundMessageRepository(db_session).add_event(scoped_event)
         for media in scoped_event.media:
-            register_pending_inbound_media_document(
+            registered_document = register_pending_inbound_media_document(
                 event=scoped_event,
                 media=media,
                 db_session=db_session,
                 org_id=resolved_org_id,
                 owner_user_id=resolved_user_id,
             )
+            if registered_document is not None:
+                if registered_document.status == "available":
+                    document_messages.append(
+                        f"Stored {registered_document.filename} as an editable "
+                        f"{registered_document.document_kind.upper()} document."
+                    )
+                else:
+                    document_messages.append(
+                        f"Registered {registered_document.filename}, but it is still "
+                        f"{registered_document.status}."
+                    )
         repo = WorkLogRepository(db_session)
         for draft in parse_result.work_logs:
             repo.add_from_draft(

@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -201,11 +201,13 @@ async def test_process_inbound_event_downloads_media_and_registers_available_doc
     assert document.sha256_hex == result.stored_media[0].media.sha256_hex
     assert result.stored_media[0].stored.local_path is not None
     assert result.stored_media[0].stored.local_path.read_bytes() == b"stored document bytes"
+    assert "Stored site-note.txt as an editable TEXT document." in result.reply_text
 
 
 @dataclass(frozen=True)
 class FakeProcessingResult:
     reply_text: str
+    document_results: list = field(default_factory=list)
 
 
 @pytest.mark.asyncio
