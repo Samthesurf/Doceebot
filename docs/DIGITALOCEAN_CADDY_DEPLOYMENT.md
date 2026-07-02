@@ -104,6 +104,29 @@ curl -fsS http://127.0.0.1:8000/health
 
 The service binds only to localhost. Caddy is responsible for public HTTPS.
 
+### Repeat deployments
+
+After pushing a new commit to the source checkout, use the deployment helper to sync the checked-out code into the runtime directory, preserve `.env`, `.venv`, and `storage`, run Alembic migrations, restart the systemd service, and verify local/public health:
+
+```bash
+sudo /root/Doceebot/scripts/deploy_update_restart.sh
+```
+
+Useful variants:
+
+```bash
+# Show what would happen without changing files or restarting.
+sudo /root/Doceebot/scripts/deploy_update_restart.sh --dry-run
+
+# Deploy the current checkout without pulling from GitHub first.
+sudo /root/Doceebot/scripts/deploy_update_restart.sh --no-pull
+
+# Include ruff and pytest before the restart.
+sudo /root/Doceebot/scripts/deploy_update_restart.sh --run-tests
+```
+
+The script writes the deployed commit SHA to `/opt/doceebot/DEPLOYED_COMMIT`.
+
 ## 6. Configure Caddy
 
 Point `doceebot.name.ng` at the droplet in Cloudflare first. Then install the Caddyfile:
