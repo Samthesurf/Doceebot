@@ -50,6 +50,37 @@ def _clean_content_type(value: str | None) -> str | None:
     return value.split(";", 1)[0].strip() or None
 
 
+_GENERIC_CONTENT_TYPES = {"application/octet-stream", "binary/octet-stream"}
+
+
+def _is_generic_content_type(value: str | None) -> bool:
+    return (value or "").lower() in _GENERIC_CONTENT_TYPES
+
+
+def _best_content_type(
+    *,
+    response_content_type: str | None,
+    platform_content_type: str | None,
+    filename: str | None,
+) -> str | None:
+    """Pick the most specific content type available for a platform file.
+
+    Telegram often serves uploaded documents as application/octet-stream even
+    when the original filename has a useful extension such as .xlsx or .docx.
+    Prefer the platform-declared MIME type, then the filename-derived MIME type,
+    before falling back to a generic HTTP response type.
+    """
+
+    response_clean = _clean_content_type(response_content_type)
+    platform_clean = _clean_content_type(platform_content_type)
+    filename_guess = mimetypes.guess_type(filename or "")[0]
+
+    for candidate in (platform_clean, filename_guess, response_clean):
+        if candidate and not _is_generic_content_type(candidate):
+            return candidate
+    return response_clean or platform_clean or filename_guess
+
+
 def _safe_component(value: str | None, *, fallback: str) -> str:
     text = (value or fallback).strip() or fallback
     text = PurePosixPath(text.replace("\\", "/")).name or fallback
@@ -125,10 +156,10 @@ class TelegramMediaDownloader:
                 await client.aclose()
 
         filename = media.filename or PurePosixPath(file_path).name
-        content_type = (
-            _clean_content_type(file_response.headers.get("content-type"))
-            or media.content_type
-            or mimetypes.guess_type(filename or "")[0]
+        content_type = _best_content_type(
+            response_content_type=file_response.headers.get("content-type"),
+            platform_content_type=media.content_type,
+            filename=filename,
         )
         if not filename:
             filename = _filename_from_content_type(content_type, fallback=f"telegram-{media.index}")
@@ -168,10 +199,10 @@ class TwilioMediaDownloader:
 
         parsed = urlparse(media.url)
         filename = media.filename or PurePosixPath(parsed.path).name
-        content_type = (
-            _clean_content_type(response.headers.get("content-type"))
-            or media.content_type
-            or mimetypes.guess_type(filename or "")[0]
+        content_type = _best_content_type(
+            response_content_type=response.headers.get("content-type"),
+            platform_content_type=media.content_type,
+            filename=filename,
         )
         if not filename:
             filename = _filename_from_content_type(content_type, fallback=f"twilio-{media.index}")

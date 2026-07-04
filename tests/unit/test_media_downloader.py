@@ -89,6 +89,7 @@ async def test_telegram_file_id_downloads_and_stores_actual_bytes(tmp_path):
 
     assert stored_items[0].data == b"site note bytes"
     stored_media = stored_event.media[0]
+    assert stored_media.content_type == "text/plain"
     assert stored_media.storage_backend == "local"
     assert stored_media.storage_key.startswith(f"orgs/{org_id}/media/telegram/2026-07-02/")
     assert stored_media.size_bytes == len(b"site note bytes")
@@ -152,6 +153,45 @@ class FakeDownloader:
         )
 
 
+class FakeXlsxDownloader:
+    async def download(self, media: MediaRef) -> DownloadedMedia:
+        return DownloadedMedia(
+            media=media,
+            data=b"stored workbook bytes",
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            filename="daily-log.xlsx",
+        )
+
+
+class FailingMediaExtractor:
+    async def extract_media(self, *args, **kwargs):
+        raise AssertionError("Gemini should not be called for unsupported document MIME types")
+
+
+class CapturingNormalizer:
+    def __init__(self) -> None:
+        self.media_extractions = None
+
+    async def parse_chat_event(self, event, *, media_extractions=None):
+        self.media_extractions = media_extractions
+        return ChatParseResult(
+            intent="work_log",
+            work_logs=[
+                WorkLogDraft(
+                    work_date=event.local_date,
+                    timezone=event.timezone,
+                    title="Workbook upload test",
+                    description="Workbook upload test",
+                    actions_taken=["Stored workbook upload"],
+                    confidence=0.9,
+                )
+            ],
+            summary_for_user="Workbook upload test",
+            follow_up_questions=[],
+            confidence=0.9,
+        )
+
+
 class FakeNormalizer:
     async def parse_chat_event(self, event, *, media_extractions=None):
         assert event.media[0].storage_key
@@ -202,6 +242,52 @@ async def test_process_inbound_event_downloads_media_and_registers_available_doc
     assert result.stored_media[0].stored.local_path is not None
     assert result.stored_media[0].stored.local_path.read_bytes() == b"stored document bytes"
     assert "Stored site-note.txt as an editable TEXT document." in result.reply_text
+
+
+@pytest.mark.asyncio
+async def test_process_inbound_event_skips_gemini_for_xlsx_upload(
+    tmp_path,
+    db_session,
+):
+    org_id = uuid4()
+    user_id = uuid4()
+    settings = Settings(local_storage_dir=str(tmp_path), _env_file=None)
+    normalizer = CapturingNormalizer()
+
+    result = await process_inbound_event(
+        make_event(
+            media=[
+                MediaRef(
+                    platform_media_id="file-1",
+                    filename="daily-log.xlsx",
+                    content_type=None,
+                    index=0,
+                )
+            ],
+            text="Please keep this workbook available for updates.",
+        ),
+        org_id=org_id,
+        user_id=user_id,
+        db_session=db_session,
+        normalizer=normalizer,
+        settings=settings,
+        download_media=True,
+        extract_media=True,
+        media_downloader=FakeXlsxDownloader(),
+        media_extractor=FailingMediaExtractor(),
+        store_reports=False,
+    )
+
+    document = db_session.scalar(select(ManagedDocument).where(ManagedDocument.org_id == org_id))
+    assert document is not None
+    assert document.status == "available"
+    assert document.document_kind == "xlsx"
+    assert result.stored_media[0].media.content_type == (
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    assert normalizer.media_extractions is not None
+    assert normalizer.media_extractions[0].extracted_text == ""
+    assert "Skipped Gemini media extraction" in normalizer.media_extractions[0].notable_details[-1]
 
 
 @dataclass(frozen=True)

@@ -1,6 +1,7 @@
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Protocol
+from typing import Literal, Protocol
 from uuid import UUID
 
 from sqlalchemy.orm import Session
@@ -31,6 +32,18 @@ from whatsapp_ai_agent.memory.work_logs import (
     build_upload_processed_message,
 )
 
+logger = logging.getLogger(__name__)
+
+_GENERIC_CONTENT_TYPES = {"application/octet-stream", "binary/octet-stream"}
+_GEMINI_SUPPORTED_DOCUMENT_TYPES = {"application/pdf"}
+_GEMINI_UNSUPPORTED_DOCUMENT_TYPES = {
+    "application/msword",
+    "application/vnd.ms-excel",
+    "application/vnd.ms-excel.sheet.macroenabled.12",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+}
+
 
 class ChatNormalizer(Protocol):
     async def parse_chat_event(
@@ -51,6 +64,39 @@ class MediaExtractor(Protocol):
         filename: str | None = None,
         caption: str | None = None,
     ) -> MediaExtraction: ...
+
+
+def _gemini_can_extract_content_type(content_type: str | None) -> bool:
+    content = (content_type or "").lower()
+    if not content or content in _GENERIC_CONTENT_TYPES:
+        return False
+    if content in _GEMINI_UNSUPPORTED_DOCUMENT_TYPES:
+        return False
+    if content in _GEMINI_SUPPORTED_DOCUMENT_TYPES:
+        return True
+    return content.startswith(("image/", "audio/", "text/"))
+
+
+def _metadata_only_media_extraction(
+    *,
+    filename: str | None,
+    content_type: str | None,
+    media_kind: Literal["voice", "audio", "image", "document", "text"],
+    reason: str,
+) -> MediaExtraction:
+    details = []
+    if filename:
+        details.append(f"Uploaded file: {filename}")
+    if content_type:
+        details.append(f"Content type: {content_type}")
+    details.append(reason)
+    return MediaExtraction(
+        extracted_text="",
+        media_kind=media_kind,
+        notable_details=details,
+        uncertain_parts=["Media content was not extracted automatically."],
+        confidence=0.0,
+    )
 
 
 @dataclass(frozen=True)
@@ -96,13 +142,41 @@ async def extract_stored_media(
             if event.message_type in {"voice", "audio", "image", "document"}
             else "document"
         )
-        extraction = await extractor.extract_media(
-            item.data,
-            content_type=content_type,
-            media_kind=media_kind_from_content_type(content_type, fallback=fallback_kind),
-            filename=item.media.filename,
-            caption=event.text,
-        )
+        media_kind = media_kind_from_content_type(content_type, fallback=fallback_kind)
+        if not _gemini_can_extract_content_type(content_type):
+            extractions.append(
+                _metadata_only_media_extraction(
+                    filename=item.media.filename,
+                    content_type=content_type,
+                    media_kind=media_kind,  # type: ignore[arg-type]
+                    reason=(
+                        "Skipped Gemini media extraction because this MIME type is not "
+                        "supported."
+                    ),
+                )
+            )
+            continue
+        try:
+            extraction = await extractor.extract_media(
+                item.data,
+                content_type=content_type,
+                media_kind=media_kind,
+                filename=item.media.filename,
+                caption=event.text,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Media extraction failed for inbound upload filename=%s content_type=%s",
+                item.media.filename,
+                content_type,
+                exc_info=True,
+            )
+            extraction = _metadata_only_media_extraction(
+                filename=item.media.filename,
+                content_type=content_type,
+                media_kind=media_kind,  # type: ignore[arg-type]
+                reason=f"Media extraction failed: {type(exc).__name__}.",
+            )
         extractions.append(extraction)
     return extractions
 
