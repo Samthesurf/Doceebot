@@ -299,7 +299,13 @@ class ConversationRepository:
         self.session.flush()
         return conversation
 
-    def export_payload(self, conversation_id: UUID) -> dict[str, object]:
+    def export_payload(
+        self,
+        conversation_id: UUID,
+        *,
+        include_llm_payloads: bool = True,
+        include_raw_payloads: bool = True,
+    ) -> dict[str, object]:
         conversation = self.session.get(ConversationSession, conversation_id)
         turns = list(
             self.session.scalars(
@@ -329,15 +335,27 @@ class ConversationRepository:
                 .order_by(DeveloperEscalation.created_at.asc())
             )
         )
-        return {
+        payload: dict[str, object] = {
             "conversation": _conversation_payload(conversation),
-            "turns": [_turn_payload(turn) for turn in turns],
+            "turns": [
+                _turn_payload(turn, include_raw_payload=include_raw_payloads)
+                for turn in turns
+            ],
             "work_logs": [_work_log_payload(log) for log in work_logs],
-            "llm_audits": [_llm_audit_payload(audit) for audit in audits],
             "developer_escalations": [
                 _developer_escalation_payload(row, include_snapshot=False) for row in escalations
             ],
         }
+        if include_llm_payloads:
+            payload["llm_audits"] = [
+                _llm_audit_payload(audit, include_payload=True) for audit in audits
+            ]
+        else:
+            payload["llm_audits_redacted"] = True
+            payload["llm_audit_summary"] = [
+                _llm_audit_payload(audit, include_payload=False) for audit in audits
+            ]
+        return payload
 
     def create_developer_escalation(
         self,
@@ -445,8 +463,25 @@ def _conversation_payload(conversation: ConversationSession | None) -> dict[str,
     }
 
 
-def _turn_payload(turn: ConversationTurn) -> dict[str, object]:
-    return {
+def _safe_media_payload(media: object) -> object:
+    if isinstance(media, dict):
+        redacted = dict(media)
+        for key in ("url", "storage_url", "storage_key"):
+            if redacted.get(key):
+                redacted[key] = "[REDACTED]"
+        return redacted
+    return media
+
+
+def _turn_payload(
+    turn: ConversationTurn,
+    *,
+    include_raw_payload: bool = True,
+) -> dict[str, object]:
+    media = _loads_json(turn.media_json, [])
+    if not isinstance(media, list):
+        media = []
+    payload = {
         "id": str(turn.id),
         "raw_message_id": str(turn.raw_message_id) if turn.raw_message_id else None,
         "direction": turn.direction,
@@ -454,12 +489,16 @@ def _turn_payload(turn: ConversationTurn) -> dict[str, object]:
         "platform_message_id": turn.platform_message_id,
         "message_type": turn.message_type,
         "body_text": turn.body_text,
-        "media": _loads_json(turn.media_json, []),
-        "raw_payload": _loads_json(turn.raw_payload_json, {}),
+        "media": media if include_raw_payload else [_safe_media_payload(item) for item in media],
         "metadata": _loads_json(turn.metadata_json, {}),
         "occurred_at": _dt(turn.occurred_at),
         "created_at": _dt(turn.created_at),
     }
+    if include_raw_payload:
+        payload["raw_payload"] = _loads_json(turn.raw_payload_json, {})
+    else:
+        payload["raw_payload_redacted"] = True
+    return payload
 
 
 def _work_log_payload(log: WorkLogEntry) -> dict[str, object]:
@@ -494,18 +533,27 @@ def _work_log_payload(log: WorkLogEntry) -> dict[str, object]:
     }
 
 
-def _llm_audit_payload(audit: LlmAuditLog) -> dict[str, object]:
-    return {
+def _llm_audit_payload(
+    audit: LlmAuditLog,
+    *,
+    include_payload: bool = True,
+) -> dict[str, object]:
+    payload = {
         "id": str(audit.id),
         "raw_message_id": str(audit.raw_message_id) if audit.raw_message_id else None,
         "provider": audit.provider,
         "model": audit.model,
         "purpose": audit.purpose,
-        "input": _loads_json(audit.input_json, {}),
-        "output": _loads_json(audit.output_json, None),
         "error_text": audit.error_text,
         "created_at": _dt(audit.created_at),
     }
+    if include_payload:
+        payload["input"] = _loads_json(audit.input_json, {})
+        payload["output"] = _loads_json(audit.output_json, None)
+    else:
+        payload["input_redacted"] = True
+        payload["output_redacted"] = True
+    return payload
 
 
 def _developer_escalation_payload(

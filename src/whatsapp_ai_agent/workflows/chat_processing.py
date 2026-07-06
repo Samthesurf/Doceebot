@@ -420,7 +420,11 @@ async def process_inbound_event(
                 )
             elif command.name == "report":
                 report_text = command.text or "No details supplied."
-                snapshot = conversation_repo.export_payload(conversation.id)
+                snapshot = conversation_repo.export_payload(
+                    conversation.id,
+                    include_llm_payloads=False,
+                    include_raw_payloads=False,
+                )
                 escalation = conversation_repo.create_developer_escalation(
                     conversation=conversation,
                     raw_message=raw_message,

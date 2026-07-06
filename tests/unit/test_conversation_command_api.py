@@ -1,4 +1,6 @@
+import json
 from datetime import UTC, datetime, time
+from typing import Literal
 from uuid import uuid4
 
 import pytest
@@ -30,23 +32,33 @@ def db_session():
 
 
 def make_event(
-    text: str,
+    text: str | None,
     *,
     sid: str | None = None,
     received_at: datetime | None = None,
+    message_type: Literal[
+        "text",
+        "voice",
+        "audio",
+        "image",
+        "document",
+        "location",
+        "unknown",
+    ] = "text",
+    raw_payload: dict[str, object] | None = None,
 ) -> InboundEvent:
     return InboundEvent(
         platform="whatsapp_twilio",
         platform_message_id=sid or f"SM{uuid4().hex[:12]}",
         platform_user_id="2348012345678",
-        platform_chat_id="whatsapp:+2348012345678",
-        message_type="text",
+        platform_chat_id="whatsapp:+234****5678",
+        message_type=message_type,
         text=text,
         received_at=received_at or datetime(2026, 7, 6, 10, 0, tzinfo=UTC),
         local_date="2026-07-06",
         local_time="11:00:00",
         timezone="Africa/Lagos",
-        raw_payload={},
+        raw_payload=raw_payload or {},
     )
 
 
@@ -409,11 +421,21 @@ async def test_16_report_creates_developer_escalation_with_snapshot(db_session, 
     )
 
     escalation = db_session.scalar(select(DeveloperEscalation))
+    snapshot = json.loads(escalation.conversation_snapshot_json)
+    bundle_path = next(tmp_path.glob("*.json"))
+    bundle_snapshot = json.loads(bundle_path.read_text())
     assert "Reported this conversation to the developer" in reply.reply_text
     assert "keeps disagreeing" in escalation.report_text
     assert escalation.status == "pending"
-    assert "work_logs" in escalation.conversation_snapshot_json
-    assert list(tmp_path.glob("*.json"))
+    assert "work_logs" in snapshot
+    assert snapshot["llm_audits_redacted"] is True
+    assert "llm_audits" not in snapshot
+    assert snapshot["llm_audit_summary"]
+    assert "input" not in snapshot["llm_audit_summary"][0]
+    assert "output" not in snapshot["llm_audit_summary"][0]
+    assert snapshot["turns"][0]["raw_payload_redacted"] is True
+    assert "raw_payload" not in snapshot["turns"][0]
+    assert bundle_snapshot == snapshot
 
 
 @pytest.mark.asyncio
@@ -495,3 +517,80 @@ async def test_20_new_spanner_does_not_trigger_new_session_command(db_session):
 def test_21_command_parser_does_not_steal_plain_report_requests():
     assert parse_conversation_command(make_event("report for last week")) is None
     assert parse_conversation_command(make_event("report: bot is looping")).name == "report"
+
+
+def test_22_command_parser_ignores_non_text_messages():
+    assert parse_conversation_command(make_event("help", message_type="voice")) is None
+
+
+@pytest.mark.asyncio
+async def test_23_positive_feedback_is_logged_without_llm(db_session):
+    org_id, user_id, _, _ = await seed_session(db_session, log("A"))
+
+    reply = await process_inbound_event(
+        make_event("good"),
+        org_id=org_id,
+        user_id=user_id,
+        db_session=db_session,
+        normalizer=QueueNormalizer([]),
+        store_reports=False,
+    )
+
+    turns = list(db_session.scalars(select(ConversationTurn).order_by(ConversationTurn.created_at)))
+    metadata = [json.loads(turn.metadata_json or "{}") for turn in turns]
+    assert "positive" in reply.reply_text
+    assert any(item.get("command") == "feedback" for item in metadata)
+
+
+@pytest.mark.asyncio
+async def test_24_undo_without_previous_snapshot_tells_user(db_session):
+    org_id, user_id, _, _ = await seed_session(db_session, log("A"))
+
+    reply = await process_inbound_event(
+        make_event("undo"),
+        org_id=org_id,
+        user_id=user_id,
+        db_session=db_session,
+        normalizer=QueueNormalizer([]),
+        store_reports=False,
+    )
+
+    assert "do not have a previous draft board" in reply.reply_text
+    assert [entry.title for entry in db_session.scalars(select(WorkLogEntry))] == ["A"]
+
+
+@pytest.mark.asyncio
+async def test_25_report_delivery_failure_is_recorded(db_session, tmp_path):
+    org_id, user_id, _, _ = await seed_session(db_session, log("A"))
+    settings = Settings(
+        developer_escalation_storage_dir=str(tmp_path),
+        developer_escalation_telegram_chat_id="12345",
+        telegram_bot_token=None,
+        _env_file=None,
+    )
+
+    reply = await process_inbound_event(
+        make_event("report: delivery should fail"),
+        org_id=org_id,
+        user_id=user_id,
+        db_session=db_session,
+        normalizer=QueueNormalizer([]),
+        settings=settings,
+        store_reports=False,
+    )
+
+    escalation = db_session.scalar(select(DeveloperEscalation))
+    assert "live delivery to the developer failed" in reply.reply_text
+    assert escalation.status == "failed"
+    assert escalation.destination == "telegram:12345"
+    assert "TELEGRAM_BOT_TOKEN" in escalation.error_text
+
+
+@pytest.mark.asyncio
+async def test_26_process_inbound_requires_resolved_org_and_user():
+    with pytest.raises(PermissionError):
+        await process_inbound_event(
+            make_event("help"),
+            normalizer=QueueNormalizer([]),
+            store_reports=False,
+        )
