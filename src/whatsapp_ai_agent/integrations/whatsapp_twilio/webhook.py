@@ -1,14 +1,20 @@
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+import asyncio
+import logging
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response, status
 from sqlalchemy.orm import Session
 
 from whatsapp_ai_agent.config import Settings, get_settings
 from whatsapp_ai_agent.core.events import InboundEvent
-from whatsapp_ai_agent.db.session import get_db_session
+from whatsapp_ai_agent.db.session import get_db_session, get_session_factory
+from whatsapp_ai_agent.integrations.whatsapp_twilio.client import build_twilio_client
 from whatsapp_ai_agent.integrations.whatsapp_twilio.parser import parse_twilio_whatsapp_form
 from whatsapp_ai_agent.integrations.whatsapp_twilio.twiml import text_messaging_response
 from whatsapp_ai_agent.memory.tenant_scope import TenantResolution, resolve_event_tenant_scope
 from whatsapp_ai_agent.security.webhooks import validate_twilio_request
 from whatsapp_ai_agent.workflows.chat_processing import process_inbound_event
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["twilio-whatsapp"])
 
@@ -63,9 +69,52 @@ async def process_live_twilio_event(
     return result.reply_text
 
 
+async def send_twilio_text_reply(
+    event: InboundEvent,
+    body: str,
+    *,
+    settings: Settings,
+) -> None:
+    """Send a follow-up WhatsApp message with Twilio's REST API.
+
+    Twilio expects webhook handlers to respond quickly. Media messages often need
+    download, Gemini extraction, and LLM parsing, so the webhook returns a fast
+    TwiML acknowledgement and this helper sends the real result afterwards.
+    """
+
+    create_kwargs: dict[str, str] = {
+        "to": event.platform_chat_id,
+        "body": body,
+    }
+    if settings.twilio_messaging_service_sid:
+        create_kwargs["messaging_service_sid"] = settings.twilio_messaging_service_sid
+    elif settings.twilio_whatsapp_from:
+        create_kwargs["from_"] = settings.twilio_whatsapp_from
+    else:
+        raise RuntimeError("TWILIO_WHATSAPP_FROM or TWILIO_MESSAGING_SERVICE_SID is required")
+
+    client = build_twilio_client(settings)
+    await asyncio.to_thread(client.messages.create, **create_kwargs)
+
+
+async def process_deferred_twilio_event(event: InboundEvent, *, settings: Settings) -> None:
+    """Process a Twilio event after the webhook response has already been sent."""
+
+    try:
+        with get_session_factory(settings)() as db_session:
+            body = await process_live_twilio_event(event, settings=settings, db_session=db_session)
+        await send_twilio_text_reply(event, body, settings=settings)
+    except Exception:
+        logger.exception(
+            "Deferred Twilio WhatsApp processing failed for platform_message_id=%s",
+            event.platform_message_id,
+        )
+
+
 @router.post("/twilio/whatsapp")
 async def receive_twilio_whatsapp(
     request: Request,
+    background_tasks: BackgroundTasks,
     settings: Settings = Depends(get_settings),
     db_session: Session = Depends(get_db_session),
 ) -> Response:
@@ -86,5 +135,12 @@ async def receive_twilio_whatsapp(
 
     event = parse_twilio_whatsapp_form(form, timezone_name=settings.app_timezone)
     request.app.state.last_twilio_event = event
+    if event.media:
+        background_tasks.add_task(process_deferred_twilio_event, event, settings=settings)
+        return Response(
+            content=text_messaging_response(build_twilio_acknowledgement(event)),
+            media_type="application/xml",
+        )
+
     body = await process_live_twilio_event(event, settings=settings, db_session=db_session)
     return Response(content=text_messaging_response(body), media_type="application/xml")
