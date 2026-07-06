@@ -8,6 +8,7 @@ wheels/
 
 # Virtual environments
 .venv
+node_modules/
 
 # Local Hermes planning state
 .hermes/
@@ -19,6 +20,7 @@ wheels/
 storage/media/*
 storage/generated/*
 storage/templates/*
+storage/dashboard-logs-password.txt
 !storage/media/.gitkeep
 !storage/generated/.gitkeep
 !storage/templates/.gitkeep
@@ -26,6 +28,7 @@ storage/templates/*
 # Test and tool caches
 .pytest_cache/
 .ruff_cache/
+.wrangler/
 .mypy_cache/
 .coverage
 htmlcov/

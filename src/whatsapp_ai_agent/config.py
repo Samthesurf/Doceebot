@@ -39,6 +39,10 @@ class Settings(BaseSettings):
     developer_escalation_telegram_chat_id: str | None = None
     developer_escalation_storage_dir: str = "storage/developer_escalations"
 
+    firebase_project_id: str | None = None
+    dashboard_allowed_emails: str | None = None
+    dashboard_logs_password: str | None = None
+
     gemini_api_key: str | None = None
     gemini_model: str = "gemini-3.1-flash-lite"
     deepseek_api_key: str | None = None

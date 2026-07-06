@@ -1,0 +1,31 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "doceebot-dashboard",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-07-06",
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS"
+  },
+  "routes": [
+    {
+      "pattern": "doceebot.name.ng/dashboard",
+      "zone_name": "doceebot.name.ng"
+    },
+    {
+      "pattern": "doceebot.name.ng/dashboard/*",
+      "zone_name": "doceebot.name.ng"
+    },
+    {
+      "pattern": "doceebot.name.ng/logs",
+      "zone_name": "doceebot.name.ng"
+    },
+    {
+      "pattern": "doceebot.name.ng/logs/*",
+      "zone_name": "doceebot.name.ng"
+    }
+  ],
+  "observability": {
+    "enabled": true
+  }
+}

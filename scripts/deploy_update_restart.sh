@@ -254,6 +254,9 @@ sync_app_tree() {
         --exclude='.env' \
         --exclude='.env.*' \
         --exclude='.venv/' \
+        --exclude='node_modules/' \
+        --exclude='dashboard/dist/' \
+        --exclude='dashboard/.wrangler/' \
         --exclude='.cache/' \
         --exclude='.local/' \
         --exclude='storage/' \
