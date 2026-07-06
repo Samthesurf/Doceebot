@@ -26,6 +26,7 @@ Return one JSON object only, matching this shape:
       "location_label": string | null,
       "location_address": string | null,
       "category": string | null,
+      "participants": [string],
       "title": string,
       "description": string,
       "actions_taken": [string],
@@ -70,8 +71,28 @@ Rules:
 - Use the event local_date when the user says today or gives no date.
 - Use yesterday only when the user explicitly says yesterday.
 - Keep raw chat wording out of supervisor summaries, but preserve operational facts.
-- Ask short useful follow-up questions for missing project, site, quantities,
-  completion status, blockers, or safety issues.
+- Extract worker, assistant, contractor, visitor, or accompanying-person names into
+  participants.
+- Extract time intervals such as "10 to 5", "from 9am till 3pm", or "between 10
+  and 5" into start_time and end_time when clear.
+- Extract tools, materials, quantities, PPE, equipment, safety observations,
+  site/location, and completion status instead of asking for them later.
+- Ask short useful follow-up questions only for facts that are genuinely missing
+  after considering the current message, uploaded-media extraction, and any
+  conversation context.
+- Do not ask for participants, time interval, site/location, equipment/materials,
+  or safety if those details already appear in the current event, media extraction,
+  or previous conversation draft.
+- If conversation_context is supplied, treat the current message as part of that
+  work-log conversation unless it clearly starts a separate work entry. Use it to
+  update existing draft logs and return the full current list of draft work logs
+  for the conversation, not just the latest message.
+- One conversation can contain multiple work entries: create multiple work_logs
+  when the user gives distinct jobs, dates, sites, or task clusters. Update the
+  matching existing entry when the user answers a follow-up question.
+- If the user sends exactly "new" or "/new", the app starts a fresh conversation
+  before this prompt is called; do not treat ordinary words like "new spanner" as
+  a reset.
 - If the user requests a report, set intent to report_request and fill report_request.
 - If the user asks to update, append to, create, or find an Excel file, workbook,
   spreadsheet, Word table, machine file, register, checklist, or logbook, set intent
@@ -129,8 +150,9 @@ def event_context_payload(
     event: InboundEvent,
     *,
     media_extractions: list[MediaExtraction] | None = None,
+    conversation_context: object | None = None,
 ) -> dict[str, object]:
-    return {
+    payload: dict[str, object] = {
         "platform": event.platform,
         "platform_message_id": event.platform_message_id,
         "message_type": event.message_type,
@@ -144,14 +166,22 @@ def event_context_payload(
             extraction.model_dump(mode="json") for extraction in media_extractions or []
         ],
     }
+    if conversation_context is not None and hasattr(conversation_context, "to_payload"):
+        payload["conversation_context"] = conversation_context.to_payload()  # type: ignore[attr-defined]
+    return payload
 
 
 def chat_parse_user_prompt(
     event: InboundEvent,
     *,
     media_extractions: list[MediaExtraction] | None = None,
+    conversation_context: object | None = None,
 ) -> str:
-    payload = event_context_payload(event, media_extractions=media_extractions)
+    payload = event_context_payload(
+        event,
+        media_extractions=media_extractions,
+        conversation_context=conversation_context,
+    )
     return "Parse this inbound worker update into the required JSON.\n" + json.dumps(
         payload,
         ensure_ascii=False,

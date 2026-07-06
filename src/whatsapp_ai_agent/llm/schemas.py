@@ -25,6 +25,7 @@ class WorkLogDraft(BaseModel):
     location_label: str | None = None
     location_address: str | None = None
     category: str | None = None
+    participants: list[str] = Field(default_factory=list)
     title: str
     description: str
     actions_taken: list[str] = Field(default_factory=list)
@@ -50,6 +51,7 @@ class WorkLogDraft(BaseModel):
 
     @field_validator(
         "actions_taken",
+        "participants",
         "materials_used",
         "equipment",
         "measurements",

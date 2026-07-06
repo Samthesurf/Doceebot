@@ -61,6 +61,78 @@ class Membership(Base):
     user: Mapped[User] = relationship(back_populates="memberships")
 
 
+class ConversationSession(Base):
+    __tablename__ = "conversation_sessions"
+    __table_args__ = (
+        Index(
+            "ix_conversation_sessions_active_lookup",
+            "org_id",
+            "user_id",
+            "platform",
+            "platform_chat_id",
+            "status",
+            "last_message_at",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    org_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id"), nullable=False)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    platform: Mapped[str] = mapped_column(String(64), nullable=False)
+    platform_chat_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[str] = mapped_column(String(64), nullable=False, default="active")
+    trigger: Mapped[str] = mapped_column(String(64), nullable=False, default="first_message")
+    title: Mapped[str | None] = mapped_column(String(255))
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    last_message_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ConversationTurn(Base):
+    __tablename__ = "conversation_turns"
+    __table_args__ = (
+        Index("ix_conversation_turns_session_time", "conversation_id", "occurred_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    conversation_id: Mapped[UUID] = mapped_column(
+        ForeignKey("conversation_sessions.id"), nullable=False
+    )
+    raw_message_id: Mapped[UUID | None] = mapped_column(ForeignKey("raw_inbound_messages.id"))
+    direction: Mapped[str] = mapped_column(String(32), nullable=False)
+    platform: Mapped[str | None] = mapped_column(String(64))
+    platform_message_id: Mapped[str | None] = mapped_column(String(255))
+    message_type: Mapped[str | None] = mapped_column(String(64))
+    body_text: Mapped[str | None] = mapped_column(Text)
+    media_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    raw_payload_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    metadata_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class LlmAuditLog(Base):
+    __tablename__ = "llm_audit_logs"
+    __table_args__ = (
+        Index("ix_llm_audit_logs_conversation_created", "conversation_id", "created_at"),
+        Index("ix_llm_audit_logs_raw_message", "raw_message_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    conversation_id: Mapped[UUID | None] = mapped_column(ForeignKey("conversation_sessions.id"))
+    raw_message_id: Mapped[UUID | None] = mapped_column(ForeignKey("raw_inbound_messages.id"))
+    provider: Mapped[str] = mapped_column(String(64), nullable=False)
+    model: Mapped[str] = mapped_column(String(255), nullable=False)
+    purpose: Mapped[str] = mapped_column(String(64), nullable=False)
+    input_json: Mapped[str] = mapped_column(Text, nullable=False)
+    output_json: Mapped[str | None] = mapped_column(Text)
+    error_text: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class RawInboundMessage(Base):
     __tablename__ = "raw_inbound_messages"
     __table_args__ = (
@@ -68,6 +140,7 @@ class RawInboundMessage(Base):
     )
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    conversation_id: Mapped[UUID | None] = mapped_column(ForeignKey("conversation_sessions.id"))
     org_id: Mapped[UUID | None] = mapped_column(ForeignKey("organizations.id"))
     user_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id"))
     platform: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -82,6 +155,7 @@ class WorkLogEntry(Base):
     __tablename__ = "work_log_entries"
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    conversation_id: Mapped[UUID | None] = mapped_column(ForeignKey("conversation_sessions.id"))
     org_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id"), nullable=False)
     user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
     raw_message_id: Mapped[UUID | None] = mapped_column(ForeignKey("raw_inbound_messages.id"))
@@ -91,18 +165,27 @@ class WorkLogEntry(Base):
     timezone: Mapped[str] = mapped_column(String(64), nullable=False, default="Africa/Lagos")
     project: Mapped[str | None] = mapped_column(String(255))
     site: Mapped[str | None] = mapped_column(String(255))
+    location_label: Mapped[str | None] = mapped_column(String(255))
+    location_address: Mapped[str | None] = mapped_column(Text)
+    category: Mapped[str | None] = mapped_column(String(128))
     title: Mapped[str] = mapped_column(String(255), nullable=False, default="Work update")
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
     summary: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(String(64), default="draft")
     confirmation_status: Mapped[str] = mapped_column(String(64), default="draft")
     actions_taken_json: Mapped[str] = mapped_column(Text, default="[]")
+    participants_json: Mapped[str] = mapped_column(Text, default="[]")
     materials_used_json: Mapped[str] = mapped_column(Text, default="[]")
+    equipment_json: Mapped[str] = mapped_column(Text, default="[]")
+    measurements_json: Mapped[str] = mapped_column(Text, default="[]")
     blockers_json: Mapped[str] = mapped_column(Text, default="[]")
     issues_json: Mapped[str] = mapped_column(Text, default="[]")
     safety_notes_json: Mapped[str] = mapped_column(Text, default="[]")
     confidence: Mapped[str] = mapped_column(String(32), default="0")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
 
 class ManagedDocument(Base):

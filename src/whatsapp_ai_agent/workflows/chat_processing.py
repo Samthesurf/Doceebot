@@ -26,10 +26,17 @@ from whatsapp_ai_agent.media.downloader import (
     download_and_store_event_media,
     media_kind_from_content_type,
 )
+from whatsapp_ai_agent.memory.conversations import (
+    ConversationContext,
+    ConversationRepository,
+    confirms_conversation,
+    starts_new_conversation,
+)
 from whatsapp_ai_agent.memory.work_logs import (
     WorkLogRepository,
     build_confirmation_message,
     build_upload_processed_message,
+    work_log_from_db,
 )
 
 logger = logging.getLogger(__name__)
@@ -51,6 +58,7 @@ class ChatNormalizer(Protocol):
         event: InboundEvent,
         *,
         media_extractions: list[MediaExtraction] | None = None,
+        conversation_context: ConversationContext | None = None,
     ) -> ChatParseResult: ...
 
 
@@ -103,6 +111,7 @@ def _metadata_only_media_extraction(
 class ChatProcessingResult:
     parse_result: ChatParseResult
     reply_text: str
+    conversation_id: UUID | None = None
     work_logs: list[WorkLogDraft] = field(default_factory=list)
     generated_reports: list[GeneratedReportFile] = field(default_factory=list)
     document_results: list[DocumentAutomationResult] = field(default_factory=list)
@@ -114,11 +123,21 @@ async def parse_inbound_event(
     *,
     media_extractions: list[MediaExtraction] | None = None,
     normalizer: ChatNormalizer | None = None,
+    conversation_context: ConversationContext | None = None,
 ) -> ChatParseResult:
     owns_normalizer = normalizer is None
     normalizer = normalizer or DeepSeekClient()
     try:
-        return await normalizer.parse_chat_event(event, media_extractions=media_extractions)
+        if conversation_context is None:
+            return await normalizer.parse_chat_event(event, media_extractions=media_extractions)
+        try:
+            return await normalizer.parse_chat_event(
+                event,
+                media_extractions=media_extractions,
+                conversation_context=conversation_context,
+            )
+        except TypeError:
+            return await normalizer.parse_chat_event(event, media_extractions=media_extractions)
     finally:
         if owns_normalizer and hasattr(normalizer, "aclose"):
             await normalizer.aclose()  # type: ignore[attr-defined]
@@ -205,6 +224,91 @@ async def process_inbound_event(
         raise PermissionError("Event must have resolved org_id and user_id before AI processing")
 
     scoped_event = event.model_copy(update={"org_id": resolved_org_id, "user_id": resolved_user_id})
+    conversation = None
+    conversation_context: ConversationContext | None = None
+    conversation_repo: ConversationRepository | None = None
+
+    if db_session is not None:
+        conversation_repo = ConversationRepository(db_session)
+        conversation, _created = conversation_repo.get_or_create_for_event(
+            scoped_event,
+            force_new=starts_new_conversation(scoped_event),
+        )
+        work_log_repo = WorkLogRepository(db_session)
+
+        if starts_new_conversation(scoped_event):
+            raw_message = RawInboundMessageRepository(db_session).add_event(
+                scoped_event,
+                conversation_id=conversation.id,
+            )
+            conversation_repo.log_inbound_event(
+                conversation,
+                scoped_event,
+                raw_message=raw_message,
+                metadata={"command": "new"},
+            )
+            reply = (
+                "Started a new work-log conversation. Send the first update for this new "
+                "set of work entries."
+            )
+            conversation_repo.log_outbound_reply(
+                conversation,
+                body_text=reply,
+                platform=scoped_event.platform,
+            )
+            db_session.commit()
+            parse_result = ChatParseResult(intent="other", summary_for_user=reply, confidence=1.0)
+            return ChatProcessingResult(
+                parse_result=parse_result,
+                reply_text=reply,
+                conversation_id=conversation.id,
+            )
+
+        if confirms_conversation(scoped_event):
+            raw_message = RawInboundMessageRepository(db_session).add_event(
+                scoped_event,
+                conversation_id=conversation.id,
+            )
+            conversation_repo.log_inbound_event(
+                conversation,
+                scoped_event,
+                raw_message=raw_message,
+                metadata={"command": "confirm"},
+            )
+            confirmed_count = work_log_repo.mark_conversation_drafts_confirmed(conversation.id)
+            reply = f"Confirmed {confirmed_count} draft work log(s) in this conversation."
+            conversation_repo.log_outbound_reply(
+                conversation,
+                body_text=reply,
+                platform=scoped_event.platform,
+            )
+            db_session.commit()
+            parse_result = ChatParseResult(intent="other", summary_for_user=reply, confidence=1.0)
+            return ChatProcessingResult(
+                parse_result=parse_result,
+                reply_text=reply,
+                conversation_id=conversation.id,
+            )
+
+        previous_entries = work_log_repo.list_for_conversation(
+            conversation.id,
+            include_confirmed=False,
+        )
+        previous_logs = [work_log_from_db(entry) for entry in previous_entries]
+        recent_turns = conversation_repo.recent_turn_payloads(conversation.id)
+        if previous_logs or recent_turns:
+            conversation_context = ConversationContext(
+                session_id=str(conversation.id),
+                started_at=conversation.started_at.isoformat() if conversation.started_at else None,
+                last_message_at=(
+                    conversation.last_message_at.isoformat()
+                    if conversation.last_message_at
+                    else None
+                ),
+                previous_work_logs=previous_logs,
+                recent_turns=recent_turns,
+            )
+
     stored_media: list[StoredInboundMedia] = []
     if download_media and scoped_event.media:
         scoped_event, stored_media = await download_and_store_event_media(
@@ -224,13 +328,51 @@ async def process_inbound_event(
         scoped_event,
         media_extractions=media_extractions,
         normalizer=normalizer,
+        conversation_context=conversation_context,
     )
 
     raw_message = None
     document_results: list[DocumentAutomationResult] = []
     document_messages: list[str] = []
     if db_session is not None:
-        raw_message = RawInboundMessageRepository(db_session).add_event(scoped_event)
+        raw_message = RawInboundMessageRepository(db_session).add_event(
+            scoped_event,
+            conversation_id=conversation.id if conversation else None,
+        )
+        if conversation_repo is not None and conversation is not None:
+            conversation_repo.log_inbound_event(
+                conversation,
+                scoped_event,
+                raw_message=raw_message,
+                metadata={"stored_media_count": len(stored_media)},
+            )
+            if media_extractions is not None:
+                conversation_repo.log_llm_audit(
+                    conversation=conversation,
+                    raw_message=raw_message,
+                    provider="gemini",
+                    model=(settings.gemini_model if settings is not None else "unknown"),
+                    purpose="media_extraction",
+                    input_payload={
+                        "platform_message_id": scoped_event.platform_message_id,
+                        "media": [item.media.model_dump(mode="json") for item in stored_media],
+                    },
+                    output_payload=[
+                        extraction.model_dump(mode="json") for extraction in media_extractions
+                    ],
+                )
+            conversation_repo.log_llm_audit(
+                conversation=conversation,
+                raw_message=raw_message,
+                provider="deepseek",
+                model=(settings.deepseek_model if settings is not None else "unknown"),
+                purpose="chat_parse",
+                input_payload={
+                    "platform_message_id": scoped_event.platform_message_id,
+                    "conversation_context_supplied": conversation_context is not None,
+                },
+                output_payload=parse_result.model_dump(mode="json"),
+            )
         for media in scoped_event.media:
             registered_document = register_pending_inbound_media_document(
                 event=scoped_event,
@@ -251,13 +393,22 @@ async def process_inbound_event(
                         f"{registered_document.status}."
                     )
         repo = WorkLogRepository(db_session)
-        for draft in parse_result.work_logs:
-            repo.add_from_draft(
-                draft,
+        if conversation is not None:
+            repo.replace_conversation_drafts(
+                conversation_id=conversation.id,
+                drafts=parse_result.work_logs,
                 org_id=resolved_org_id,
                 user_id=resolved_user_id,
                 raw_message=raw_message,
             )
+        else:
+            for draft in parse_result.work_logs:
+                repo.add_from_draft(
+                    draft,
+                    org_id=resolved_org_id,
+                    user_id=resolved_user_id,
+                    raw_message=raw_message,
+                )
 
         if parse_result.intent == "document_update" and parse_result.document_update_request:
             update_request = parse_result.document_update_request
@@ -359,9 +510,17 @@ async def process_inbound_event(
         lines.extend(f"- {message}" for message in document_messages)
         reply = "\n".join(lines)
 
+    if conversation_repo is not None and conversation is not None:
+        conversation_repo.log_outbound_reply(
+            conversation,
+            body_text=reply,
+            platform=scoped_event.platform,
+        )
+
     return ChatProcessingResult(
         parse_result=parse_result,
         reply_text=reply,
+        conversation_id=conversation.id if conversation is not None else None,
         work_logs=parse_result.work_logs,
         generated_reports=generated_reports,
         document_results=document_results,

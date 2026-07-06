@@ -18,8 +18,14 @@ class RawInboundMessageRepository:
         self.session.flush()
         return message
 
-    def add_event(self, event: InboundEvent) -> RawInboundMessage:
+    def add_event(
+        self,
+        event: InboundEvent,
+        *,
+        conversation_id: UUID | None = None,
+    ) -> RawInboundMessage:
         message = RawInboundMessage(
+            conversation_id=conversation_id,
             org_id=event.org_id,
             user_id=event.user_id,
             platform=event.platform,

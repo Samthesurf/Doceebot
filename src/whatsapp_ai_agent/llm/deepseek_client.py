@@ -106,10 +106,15 @@ class DeepSeekClient:
         event: InboundEvent,
         *,
         media_extractions: list[MediaExtraction] | None = None,
+        conversation_context: object | None = None,
     ) -> ChatParseResult:
         return await self._chat_completion_json(
             system_prompt=CHAT_PARSE_SYSTEM_PROMPT,
-            user_prompt=chat_parse_user_prompt(event, media_extractions=media_extractions),
+            user_prompt=chat_parse_user_prompt(
+                event,
+                media_extractions=media_extractions,
+                conversation_context=conversation_context,
+            ),
             schema=ChatParseResult,
         )
 
