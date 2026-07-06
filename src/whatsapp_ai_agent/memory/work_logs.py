@@ -117,13 +117,124 @@ class WorkLogRepository:
         statement = statement.order_by(WorkLogEntry.work_date.asc(), WorkLogEntry.created_at.asc())
         return list(self.session.scalars(statement))
 
-    def mark_conversation_drafts_confirmed(self, conversation_id: UUID) -> int:
-        entries = self.list_for_conversation(conversation_id, include_confirmed=False)
+    def mark_conversation_drafts_confirmed(
+        self,
+        conversation_id: UUID,
+        indexes: list[int] | None = None,
+    ) -> int:
+        entries = self._select_indexed_drafts(conversation_id, indexes)
         for entry in entries:
             entry.confirmation_status = "confirmed"
+            entry.status = "done" if entry.status == "draft" else entry.status
             self.session.add(entry)
         self.session.flush()
         return len(entries)
+
+    def delete_conversation_drafts(
+        self,
+        conversation_id: UUID,
+        indexes: list[int],
+    ) -> int:
+        entries = self._select_indexed_drafts(conversation_id, indexes)
+        for entry in entries:
+            self.session.delete(entry)
+        self.session.flush()
+        return len(entries)
+
+    def cancel_conversation_drafts(self, conversation_id: UUID) -> int:
+        entries = self.list_for_conversation(conversation_id, include_confirmed=False)
+        for entry in entries:
+            entry.status = "cancelled"
+            entry.confirmation_status = "cancelled"
+            self.session.add(entry)
+        self.session.flush()
+        return len(entries)
+
+    def restore_conversation_drafts(
+        self,
+        *,
+        conversation_id: UUID,
+        org_id: UUID,
+        user_id: UUID,
+        drafts: list[WorkLogDraft],
+        raw_message: RawInboundMessage | None = None,
+    ) -> list[WorkLogEntry]:
+        return self.replace_conversation_drafts(
+            conversation_id=conversation_id,
+            org_id=org_id,
+            user_id=user_id,
+            drafts=drafts,
+            raw_message=raw_message,
+        )
+
+    def merge_conversation_drafts(
+        self,
+        conversation_id: UUID,
+        indexes: list[int],
+    ) -> WorkLogEntry | None:
+        entries = self._select_indexed_drafts(conversation_id, indexes)
+        if len(entries) < 2:
+            return None
+        keeper = entries[0]
+        for entry in entries[1:]:
+            keeper.title = _merge_text(keeper.title, entry.title, separator=" / ")[:255]
+            keeper.description = _merge_text(keeper.description, entry.description)
+            keeper.summary = _merge_text(keeper.summary, entry.summary)
+            keeper.project = keeper.project or entry.project
+            keeper.site = keeper.site or entry.site
+            keeper.location_label = keeper.location_label or entry.location_label
+            keeper.location_address = keeper.location_address or entry.location_address
+            keeper.category = keeper.category or entry.category
+            keeper.start_time = min(
+                [value for value in [keeper.start_time, entry.start_time] if value],
+                default=None,
+            )
+            keeper.end_time = max(
+                [value for value in [keeper.end_time, entry.end_time] if value],
+                default=None,
+            )
+            keeper.actions_taken_json = json.dumps(
+                _merge_json_lists(keeper.actions_taken_json, entry.actions_taken_json)
+            )
+            keeper.participants_json = json.dumps(
+                _merge_json_lists(keeper.participants_json, entry.participants_json)
+            )
+            keeper.materials_used_json = json.dumps(
+                _merge_json_lists(keeper.materials_used_json, entry.materials_used_json)
+            )
+            keeper.equipment_json = json.dumps(
+                _merge_json_lists(keeper.equipment_json, entry.equipment_json)
+            )
+            keeper.measurements_json = json.dumps(
+                _merge_json_lists(keeper.measurements_json, entry.measurements_json)
+            )
+            keeper.blockers_json = json.dumps(
+                _merge_json_lists(keeper.blockers_json, entry.blockers_json)
+            )
+            keeper.issues_json = json.dumps(
+                _merge_json_lists(keeper.issues_json, entry.issues_json)
+            )
+            keeper.safety_notes_json = json.dumps(
+                _merge_json_lists(keeper.safety_notes_json, entry.safety_notes_json)
+            )
+            self.session.delete(entry)
+        self.session.add(keeper)
+        self.session.flush()
+        return keeper
+
+    def _select_indexed_drafts(
+        self,
+        conversation_id: UUID,
+        indexes: list[int] | None,
+    ) -> list[WorkLogEntry]:
+        entries = self.list_for_conversation(conversation_id, include_confirmed=False)
+        if not indexes:
+            return entries
+        selected: list[WorkLogEntry] = []
+        for index in indexes:
+            if 1 <= index <= len(entries):
+                selected.append(entries[index - 1])
+        return selected
 
     def list_for_report(
         self,
@@ -142,6 +253,39 @@ class WorkLogRepository:
             statement = statement.where(WorkLogEntry.work_date <= end_date)
         statement = statement.order_by(WorkLogEntry.work_date.asc(), WorkLogEntry.created_at.asc())
         return list(self.session.scalars(statement))
+
+
+def _json_list(value: str | None) -> list[str]:
+    if not value:
+        return []
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return [str(item) for item in parsed if str(item).strip()]
+
+
+def _merge_json_lists(left: str | None, right: str | None) -> list[str]:
+    merged: list[str] = []
+    seen: set[str] = set()
+    for item in [*_json_list(left), *_json_list(right)]:
+        key = item.casefold()
+        if key not in seen:
+            seen.add(key)
+            merged.append(item)
+    return merged
+
+
+def _merge_text(left: str | None, right: str | None, *, separator: str = "\n") -> str:
+    left_clean = (left or "").strip()
+    right_clean = (right or "").strip()
+    if not left_clean:
+        return right_clean
+    if not right_clean or right_clean == left_clean:
+        return left_clean
+    return f"{left_clean}{separator}{right_clean}"
 
 
 def work_log_summary(log: NormalizedWorkLog | WorkLogDraft) -> str:
@@ -217,6 +361,66 @@ def _question_is_answered(question: str, logs: list[WorkLogDraft]) -> bool:
     if any(token in text for token in ["completed", "status", "planned"]):
         return any(log.status and log.status != "needs_review" for log in logs)
     return False
+
+
+def build_draft_board_message(
+    drafts: list[WorkLogDraft],
+    *,
+    conversation_id: UUID | None = None,
+) -> str:
+    lines = ["Current work-log session drafts:"]
+    if conversation_id:
+        lines.append(f"Session: {conversation_id}")
+    if not drafts:
+        lines.append("No active draft logs yet.")
+    for index, log in enumerate(drafts, start=1):
+        lines.append("")
+        lines.append(f"{index}. {log.title}")
+        lines.append(f"   Date: {log.work_date.isoformat()}")
+        time_range = _format_time_range(log)
+        if time_range:
+            lines.append(f"   Time: {time_range}")
+        if log.project:
+            lines.append(f"   Project: {log.project}")
+        if log.site or log.location_label or log.location_address:
+            location_parts = [
+                part for part in [log.site, log.location_label, log.location_address] if part
+            ]
+            lines.append("   Location: " + "; ".join(location_parts))
+        if log.participants:
+            lines.append("   People: " + "; ".join(log.participants[:6]))
+        if log.materials_used:
+            lines.append("   Materials: " + "; ".join(log.materials_used[:6]))
+        lines.append(f"   Status: {log.status}; confirmation: {log.confirmation_status}")
+    lines.append("")
+    lines.append("Commands: confirm 1, confirm all, edit 1: ..., delete 1, merge 1 and 2,")
+    lines.append("split 1: ..., undo, cancel, export, forget this session, new, help,")
+    lines.append("report this ...")
+    return "\n".join(lines)
+
+
+def build_help_message() -> str:
+    return "\n".join(
+        [
+            "I can keep a work-log conversation open and maintain multiple draft logs.",
+            "",
+            "Core commands:",
+            "- status or show drafts: see the current draft board",
+            "- edit 1: <correction>: update a draft with more details",
+            "- split 1: <how to split it>: split one draft into multiple logs",
+            "- merge 1 and 2: combine drafts",
+            "- delete 2: remove a draft",
+            "- undo: restore the previous draft board",
+            "- confirm 1 or confirm all: confirm drafts",
+            "- cancel: discard active draft logs and close the session",
+            "- new: start a fresh work-log conversation",
+            "- export: show the current conversation id for audit export",
+            "- forget this session: delete this conversation's stored data",
+            "- report this <problem>: send this conversation and your note to the dev",
+            "",
+            "You can also just send text, photos, documents, or voice notes naturally.",
+        ]
+    )
 
 
 def build_confirmation_message(parse_result: ChatParseResult) -> str:

@@ -5,15 +5,17 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from whatsapp_ai_agent.core.events import InboundEvent
 from whatsapp_ai_agent.db.models import (
     ConversationSession,
     ConversationTurn,
+    DeveloperEscalation,
     LlmAuditLog,
     RawInboundMessage,
+    WorkLogEntry,
 )
 from whatsapp_ai_agent.llm.schemas import WorkLogDraft
 
@@ -267,6 +269,147 @@ class ConversationRepository:
         self.session.flush()
         return row
 
+    def latest_previous_draft_snapshot(self, conversation_id: UUID) -> list[WorkLogDraft]:
+        rows = self.session.scalars(
+            select(ConversationTurn)
+            .where(ConversationTurn.conversation_id == conversation_id)
+            .order_by(ConversationTurn.occurred_at.desc(), ConversationTurn.created_at.desc())
+            .limit(50)
+        )
+        for row in rows:
+            metadata = _loads_json(row.metadata_json, {})
+            if not isinstance(metadata, dict):
+                continue
+            snapshot = metadata.get("previous_drafts")
+            if not isinstance(snapshot, list):
+                continue
+            return [WorkLogDraft.model_validate(item) for item in snapshot]
+        return []
+
+    def close_conversation(
+        self,
+        conversation: ConversationSession,
+        *,
+        status: str = "closed",
+        closed_at: datetime | None = None,
+    ) -> ConversationSession:
+        conversation.status = status
+        conversation.closed_at = closed_at or datetime.now(UTC)
+        self.session.add(conversation)
+        self.session.flush()
+        return conversation
+
+    def export_payload(self, conversation_id: UUID) -> dict[str, object]:
+        conversation = self.session.get(ConversationSession, conversation_id)
+        turns = list(
+            self.session.scalars(
+                select(ConversationTurn)
+                .where(ConversationTurn.conversation_id == conversation_id)
+                .order_by(ConversationTurn.occurred_at.asc(), ConversationTurn.created_at.asc())
+            )
+        )
+        work_logs = list(
+            self.session.scalars(
+                select(WorkLogEntry)
+                .where(WorkLogEntry.conversation_id == conversation_id)
+                .order_by(WorkLogEntry.work_date.asc(), WorkLogEntry.created_at.asc())
+            )
+        )
+        audits = list(
+            self.session.scalars(
+                select(LlmAuditLog)
+                .where(LlmAuditLog.conversation_id == conversation_id)
+                .order_by(LlmAuditLog.created_at.asc())
+            )
+        )
+        escalations = list(
+            self.session.scalars(
+                select(DeveloperEscalation)
+                .where(DeveloperEscalation.conversation_id == conversation_id)
+                .order_by(DeveloperEscalation.created_at.asc())
+            )
+        )
+        return {
+            "conversation": _conversation_payload(conversation),
+            "turns": [_turn_payload(turn) for turn in turns],
+            "work_logs": [_work_log_payload(log) for log in work_logs],
+            "llm_audits": [_llm_audit_payload(audit) for audit in audits],
+            "developer_escalations": [
+                _developer_escalation_payload(row, include_snapshot=False) for row in escalations
+            ],
+        }
+
+    def create_developer_escalation(
+        self,
+        *,
+        conversation: ConversationSession,
+        raw_message: RawInboundMessage | None,
+        report_text: str,
+        snapshot: dict[str, object] | None = None,
+    ) -> DeveloperEscalation:
+        payload = snapshot or self.export_payload(conversation.id)
+        row = DeveloperEscalation(
+            conversation_id=conversation.id,
+            raw_message_id=raw_message.id if raw_message else None,
+            org_id=conversation.org_id,
+            user_id=conversation.user_id,
+            platform=conversation.platform,
+            report_text=report_text,
+            conversation_snapshot_json=json.dumps(payload, default=str),
+            status="pending",
+        )
+        self.session.add(row)
+        self.session.flush()
+        return row
+
+    def update_developer_escalation_delivery(
+        self,
+        escalation: DeveloperEscalation,
+        *,
+        status: str,
+        destination: str | None = None,
+        provider_message_id: str | None = None,
+        error_text: str | None = None,
+    ) -> DeveloperEscalation:
+        escalation.status = status
+        escalation.destination = destination
+        escalation.provider_message_id = provider_message_id
+        escalation.error_text = error_text
+        if status == "sent":
+            escalation.sent_at = datetime.now(UTC)
+        self.session.add(escalation)
+        self.session.flush()
+        return escalation
+
+    def delete_conversation_data(self, conversation_id: UUID) -> None:
+        raw_ids = list(
+            self.session.scalars(
+                select(RawInboundMessage.id).where(
+                    RawInboundMessage.conversation_id == conversation_id
+                )
+            )
+        )
+        self.session.execute(
+            delete(DeveloperEscalation).where(
+                DeveloperEscalation.conversation_id == conversation_id
+            )
+        )
+        self.session.execute(
+            delete(LlmAuditLog).where(LlmAuditLog.conversation_id == conversation_id)
+        )
+        self.session.execute(
+            delete(WorkLogEntry).where(WorkLogEntry.conversation_id == conversation_id)
+        )
+        self.session.execute(
+            delete(ConversationTurn).where(ConversationTurn.conversation_id == conversation_id)
+        )
+        if raw_ids:
+            self.session.execute(delete(RawInboundMessage).where(RawInboundMessage.id.in_(raw_ids)))
+        self.session.execute(
+            delete(ConversationSession).where(ConversationSession.id == conversation_id)
+        )
+        self.session.flush()
+
 
 def _loads_json(value: str | None, fallback: object) -> object:
     if not value:
@@ -275,3 +418,115 @@ def _loads_json(value: str | None, fallback: object) -> object:
         return json.loads(value)
     except json.JSONDecodeError:
         return fallback
+
+
+def _dt(value: object) -> str | None:
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return None
+
+
+def _conversation_payload(conversation: ConversationSession | None) -> dict[str, object] | None:
+    if conversation is None:
+        return None
+    return {
+        "id": str(conversation.id),
+        "org_id": str(conversation.org_id),
+        "user_id": str(conversation.user_id),
+        "platform": conversation.platform,
+        "platform_chat_id": conversation.platform_chat_id,
+        "status": conversation.status,
+        "trigger": conversation.trigger,
+        "title": conversation.title,
+        "started_at": _dt(conversation.started_at),
+        "last_message_at": _dt(conversation.last_message_at),
+        "closed_at": _dt(conversation.closed_at),
+        "created_at": _dt(conversation.created_at),
+    }
+
+
+def _turn_payload(turn: ConversationTurn) -> dict[str, object]:
+    return {
+        "id": str(turn.id),
+        "raw_message_id": str(turn.raw_message_id) if turn.raw_message_id else None,
+        "direction": turn.direction,
+        "platform": turn.platform,
+        "platform_message_id": turn.platform_message_id,
+        "message_type": turn.message_type,
+        "body_text": turn.body_text,
+        "media": _loads_json(turn.media_json, []),
+        "raw_payload": _loads_json(turn.raw_payload_json, {}),
+        "metadata": _loads_json(turn.metadata_json, {}),
+        "occurred_at": _dt(turn.occurred_at),
+        "created_at": _dt(turn.created_at),
+    }
+
+
+def _work_log_payload(log: WorkLogEntry) -> dict[str, object]:
+    return {
+        "id": str(log.id),
+        "raw_message_id": str(log.raw_message_id) if log.raw_message_id else None,
+        "work_date": log.work_date.isoformat() if log.work_date else None,
+        "start_time": log.start_time.isoformat() if log.start_time else None,
+        "end_time": log.end_time.isoformat() if log.end_time else None,
+        "timezone": log.timezone,
+        "project": log.project,
+        "site": log.site,
+        "location_label": log.location_label,
+        "location_address": log.location_address,
+        "category": log.category,
+        "title": log.title,
+        "description": log.description,
+        "summary": log.summary,
+        "status": log.status,
+        "confirmation_status": log.confirmation_status,
+        "actions_taken": _loads_json(log.actions_taken_json, []),
+        "participants": _loads_json(log.participants_json, []),
+        "materials_used": _loads_json(log.materials_used_json, []),
+        "equipment": _loads_json(log.equipment_json, []),
+        "measurements": _loads_json(log.measurements_json, []),
+        "blockers": _loads_json(log.blockers_json, []),
+        "issues": _loads_json(log.issues_json, []),
+        "safety_notes": _loads_json(log.safety_notes_json, []),
+        "confidence": log.confidence,
+        "created_at": _dt(log.created_at),
+        "updated_at": _dt(log.updated_at),
+    }
+
+
+def _llm_audit_payload(audit: LlmAuditLog) -> dict[str, object]:
+    return {
+        "id": str(audit.id),
+        "raw_message_id": str(audit.raw_message_id) if audit.raw_message_id else None,
+        "provider": audit.provider,
+        "model": audit.model,
+        "purpose": audit.purpose,
+        "input": _loads_json(audit.input_json, {}),
+        "output": _loads_json(audit.output_json, None),
+        "error_text": audit.error_text,
+        "created_at": _dt(audit.created_at),
+    }
+
+
+def _developer_escalation_payload(
+    escalation: DeveloperEscalation,
+    *,
+    include_snapshot: bool = True,
+) -> dict[str, object]:
+    payload = {
+        "id": str(escalation.id),
+        "raw_message_id": str(escalation.raw_message_id) if escalation.raw_message_id else None,
+        "report_text": escalation.report_text,
+        "status": escalation.status,
+        "destination": escalation.destination,
+        "provider_message_id": escalation.provider_message_id,
+        "error_text": escalation.error_text,
+        "created_at": _dt(escalation.created_at),
+        "sent_at": _dt(escalation.sent_at),
+    }
+    if include_snapshot:
+        payload["conversation_snapshot"] = _loads_json(
+            escalation.conversation_snapshot_json,
+            {},
+        )
+    return payload

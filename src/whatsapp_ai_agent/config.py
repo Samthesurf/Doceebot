@@ -36,6 +36,8 @@ class Settings(BaseSettings):
 
     telegram_bot_token: str | None = None
     telegram_webhook_secret_token: str | None = None
+    developer_escalation_telegram_chat_id: str | None = None
+    developer_escalation_storage_dir: str = "storage/developer_escalations"
 
     gemini_api_key: str | None = None
     gemini_model: str = "gemini-3.1-flash-lite"

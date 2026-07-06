@@ -90,6 +90,14 @@ Rules:
 - One conversation can contain multiple work entries: create multiple work_logs
   when the user gives distinct jobs, dates, sites, or task clusters. Update the
   matching existing entry when the user answers a follow-up question.
+- If conversation_context.recent_turns contains a command_hint for edit/update/fix,
+  apply the correction to the referenced draft index and return the full updated
+  draft list.
+- If the command_hint is split, split the referenced draft into the requested
+  multiple entries and preserve shared facts unless the user says otherwise.
+- If the current text asks to merge, delete, confirm, undo, cancel, export, forget,
+  help, status, or report a bot problem, those are app-level commands and should
+  normally be handled before this prompt. Do not turn them into work logs.
 - If the user sends exactly "new" or "/new", the app starts a fresh conversation
   before this prompt is called; do not treat ordinary words like "new spanner" as
   a reset.

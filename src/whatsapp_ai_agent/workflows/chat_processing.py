@@ -1,3 +1,4 @@
+import json
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -6,7 +7,7 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
-from whatsapp_ai_agent.config import Settings
+from whatsapp_ai_agent.config import Settings, get_settings
 from whatsapp_ai_agent.core.events import InboundEvent
 from whatsapp_ai_agent.db.repositories import ManagedDocumentRepository, RawInboundMessageRepository
 from whatsapp_ai_agent.documents.automation import (
@@ -17,6 +18,7 @@ from whatsapp_ai_agent.documents.automation import (
 )
 from whatsapp_ai_agent.documents.reports import GeneratedReportFile, generate_report_files
 from whatsapp_ai_agent.documents.schemas import DocumentAutomationResult
+from whatsapp_ai_agent.integrations.telegram.sender import TelegramSender
 from whatsapp_ai_agent.llm.deepseek_client import DeepSeekClient
 from whatsapp_ai_agent.llm.gemini_client import GeminiMediaExtractor
 from whatsapp_ai_agent.llm.schemas import ChatParseResult, MediaExtraction, WorkLogDraft
@@ -26,15 +28,20 @@ from whatsapp_ai_agent.media.downloader import (
     download_and_store_event_media,
     media_kind_from_content_type,
 )
+from whatsapp_ai_agent.memory.conversation_commands import (
+    ConversationCommand,
+    parse_conversation_command,
+)
 from whatsapp_ai_agent.memory.conversations import (
     ConversationContext,
     ConversationRepository,
-    confirms_conversation,
     starts_new_conversation,
 )
 from whatsapp_ai_agent.memory.work_logs import (
     WorkLogRepository,
     build_confirmation_message,
+    build_draft_board_message,
+    build_help_message,
     build_upload_processed_message,
     work_log_from_db,
 )
@@ -200,6 +207,64 @@ async def extract_stored_media(
     return extractions
 
 
+def _result_for_reply(reply: str, conversation_id: UUID | None) -> ChatProcessingResult:
+    return ChatProcessingResult(
+        parse_result=ChatParseResult(intent="other", summary_for_user=reply, confidence=1.0),
+        reply_text=reply,
+        conversation_id=conversation_id,
+    )
+
+
+def _drafts_for_board(
+    work_log_repo: WorkLogRepository,
+    conversation_id: UUID,
+) -> list[WorkLogDraft]:
+    return [
+        work_log_from_db(entry)
+        for entry in work_log_repo.list_for_conversation(conversation_id, include_confirmed=False)
+    ]
+
+
+def _command_metadata(command: ConversationCommand) -> dict[str, object]:
+    return {
+        "command": command.name,
+        "command_text": command.raw_text,
+        "command_indexes": command.indexes,
+    }
+
+
+async def _send_developer_escalation_if_configured(
+    *,
+    settings: Settings,
+    escalation_id: UUID,
+    report_text: str,
+    snapshot: dict[str, object],
+) -> tuple[str, str | None, str | None]:
+    destination = settings.developer_escalation_telegram_chat_id
+    storage_dir = Path(settings.developer_escalation_storage_dir)
+    storage_dir.mkdir(parents=True, exist_ok=True)
+    bundle_path = storage_dir / f"{escalation_id}.json"
+    bundle_path.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2, default=str))
+
+    if not destination:
+        return "pending", "database", None
+    if not settings.telegram_bot_token:
+        return "failed", f"telegram:{destination}", "TELEGRAM_BOT_TOKEN is not configured"
+
+    caption = (
+        "Doceebot developer escalation\n"
+        f"Escalation: {escalation_id}\n"
+        f"User note: {report_text[:800] or 'No details supplied.'}"
+    )
+    try:
+        sender = TelegramSender(settings=settings)
+        await sender.send_document(chat_id=destination, path=bundle_path, caption=caption)
+    except Exception as exc:
+        logger.warning("Developer escalation delivery failed", exc_info=True)
+        return "failed", f"telegram:{destination}", f"{type(exc).__name__}: {exc}"
+    return "sent", f"telegram:{destination}", None
+
+
 async def process_inbound_event(
     event: InboundEvent,
     *,
@@ -235,6 +300,7 @@ async def process_inbound_event(
             force_new=starts_new_conversation(scoped_event),
         )
         work_log_repo = WorkLogRepository(db_session)
+        command = parse_conversation_command(scoped_event)
 
         if starts_new_conversation(scoped_event):
             raw_message = RawInboundMessageRepository(db_session).add_event(
@@ -257,14 +323,9 @@ async def process_inbound_event(
                 platform=scoped_event.platform,
             )
             db_session.commit()
-            parse_result = ChatParseResult(intent="other", summary_for_user=reply, confidence=1.0)
-            return ChatProcessingResult(
-                parse_result=parse_result,
-                reply_text=reply,
-                conversation_id=conversation.id,
-            )
+            return _result_for_reply(reply, conversation.id)
 
-        if confirms_conversation(scoped_event):
+        if command is not None and command.should_short_circuit:
             raw_message = RawInboundMessageRepository(db_session).add_event(
                 scoped_event,
                 conversation_id=conversation.id,
@@ -273,22 +334,139 @@ async def process_inbound_event(
                 conversation,
                 scoped_event,
                 raw_message=raw_message,
-                metadata={"command": "confirm"},
+                metadata=_command_metadata(command),
             )
-            confirmed_count = work_log_repo.mark_conversation_drafts_confirmed(conversation.id)
-            reply = f"Confirmed {confirmed_count} draft work log(s) in this conversation."
+
+            if command.name == "help":
+                reply = build_help_message()
+            elif command.name == "status":
+                drafts = _drafts_for_board(work_log_repo, conversation.id)
+                reply = build_draft_board_message(drafts, conversation_id=conversation.id)
+            elif command.name == "confirm":
+                confirmed_count = work_log_repo.mark_conversation_drafts_confirmed(
+                    conversation.id,
+                    indexes=command.indexes or None,
+                )
+                target = "selected" if command.indexes else "all"
+                reply = f"Confirmed {confirmed_count} {target} draft work log(s)."
+            elif command.name == "delete":
+                if not command.indexes:
+                    reply = "Tell me which draft to delete, for example: delete 2."
+                else:
+                    deleted_count = work_log_repo.delete_conversation_drafts(
+                        conversation.id,
+                        command.indexes,
+                    )
+                    drafts = _drafts_for_board(work_log_repo, conversation.id)
+                    reply = (
+                        f"Deleted {deleted_count} draft work log(s).\n\n"
+                        + build_draft_board_message(drafts, conversation_id=conversation.id)
+                    )
+            elif command.name == "merge":
+                if len(command.indexes) < 2:
+                    reply = "Tell me at least two drafts to merge, for example: merge 1 and 2."
+                else:
+                    merged = work_log_repo.merge_conversation_drafts(
+                        conversation.id,
+                        command.indexes,
+                    )
+                    drafts = _drafts_for_board(work_log_repo, conversation.id)
+                    reply = (
+                        "Merged the selected drafts.\n\n"
+                        + build_draft_board_message(drafts, conversation_id=conversation.id)
+                        if merged
+                        else "I could not find enough matching draft logs to merge."
+                    )
+            elif command.name == "undo":
+                snapshot = conversation_repo.latest_previous_draft_snapshot(conversation.id)
+                if not snapshot:
+                    reply = "I do not have a previous draft board to restore yet."
+                else:
+                    work_log_repo.restore_conversation_drafts(
+                        conversation_id=conversation.id,
+                        org_id=resolved_org_id,
+                        user_id=resolved_user_id,
+                        drafts=snapshot,
+                        raw_message=raw_message,
+                    )
+                    reply = (
+                        "Restored the previous draft board.\n\n"
+                        + build_draft_board_message(snapshot, conversation_id=conversation.id)
+                    )
+            elif command.name == "cancel":
+                cancelled_count = work_log_repo.cancel_conversation_drafts(conversation.id)
+                conversation_repo.close_conversation(conversation, status="cancelled")
+                reply = f"Cancelled this session and discarded {cancelled_count} draft log(s)."
+            elif command.name == "export":
+                snapshot = conversation_repo.export_payload(conversation.id)
+                storage_settings = settings or get_settings()
+                export_dir = Path(storage_settings.developer_escalation_storage_dir)
+                export_dir.mkdir(parents=True, exist_ok=True)
+                export_path = export_dir / f"conversation-{conversation.id}.json"
+                export_path.write_text(
+                    json.dumps(snapshot, ensure_ascii=False, indent=2, default=str)
+                )
+                reply = (
+                    f"Conversation export is ready. Session: {conversation.id}. "
+                    f"Audit bundle saved for admin review as {export_path.name}."
+                )
+            elif command.name == "forget":
+                forgotten_id = conversation.id
+                conversation_repo.delete_conversation_data(conversation.id)
+                db_session.commit()
+                return _result_for_reply(
+                    f"Deleted stored data for conversation {forgotten_id}.",
+                    None,
+                )
+            elif command.name == "report":
+                report_text = command.text or "No details supplied."
+                snapshot = conversation_repo.export_payload(conversation.id)
+                escalation = conversation_repo.create_developer_escalation(
+                    conversation=conversation,
+                    raw_message=raw_message,
+                    report_text=report_text,
+                    snapshot=snapshot,
+                )
+                delivery_status, destination, error_text = (
+                    await _send_developer_escalation_if_configured(
+                        settings=settings or get_settings(),
+                        escalation_id=escalation.id,
+                        report_text=report_text,
+                        snapshot=snapshot,
+                    )
+                )
+                conversation_repo.update_developer_escalation_delivery(
+                    escalation,
+                    status=delivery_status,
+                    destination=destination,
+                    error_text=error_text,
+                )
+                reply = (
+                    f"Reported this conversation to the developer. Report ID: {escalation.id}."
+                )
+                if delivery_status == "pending":
+                    reply += " It is saved in the developer escalation queue."
+                elif delivery_status == "failed":
+                    reply += " I saved it, but live delivery to the developer failed."
+            elif command.name == "feedback":
+                if command.text == "negative":
+                    reply = (
+                        "I marked the last response as wrong. Reply with edit 1: <correction>, "
+                        "delete 1, undo, or report this <what went wrong>."
+                    )
+                else:
+                    reply = "Thanks, I marked that feedback as positive."
+            else:
+                reply = build_help_message()
+
             conversation_repo.log_outbound_reply(
                 conversation,
                 body_text=reply,
                 platform=scoped_event.platform,
+                metadata={"command_response": command.name},
             )
             db_session.commit()
-            parse_result = ChatParseResult(intent="other", summary_for_user=reply, confidence=1.0)
-            return ChatProcessingResult(
-                parse_result=parse_result,
-                reply_text=reply,
-                conversation_id=conversation.id,
-            )
+            return _result_for_reply(reply, conversation.id)
 
         previous_entries = work_log_repo.list_for_conversation(
             conversation.id,
@@ -296,6 +474,15 @@ async def process_inbound_event(
         )
         previous_logs = [work_log_from_db(entry) for entry in previous_entries]
         recent_turns = conversation_repo.recent_turn_payloads(conversation.id)
+        if command is not None and not command.should_short_circuit:
+            recent_turns.append(
+                {
+                    "direction": "system",
+                    "message_type": "command_hint",
+                    "body_text": command.raw_text,
+                    "metadata": _command_metadata(command),
+                }
+            )
         if previous_logs or recent_turns:
             conversation_context = ConversationContext(
                 session_id=str(conversation.id),
@@ -340,11 +527,19 @@ async def process_inbound_event(
             conversation_id=conversation.id if conversation else None,
         )
         if conversation_repo is not None and conversation is not None:
+            inbound_metadata: dict[str, object] = {"stored_media_count": len(stored_media)}
+            if conversation_context is not None:
+                inbound_metadata["previous_drafts"] = [
+                    log.model_dump(mode="json") for log in conversation_context.previous_work_logs
+                ]
+            parsed_command = parse_conversation_command(scoped_event)
+            if parsed_command is not None:
+                inbound_metadata.update(_command_metadata(parsed_command))
             conversation_repo.log_inbound_event(
                 conversation,
                 scoped_event,
                 raw_message=raw_message,
-                metadata={"stored_media_count": len(stored_media)},
+                metadata=inbound_metadata,
             )
             if media_extractions is not None:
                 conversation_repo.log_llm_audit(
@@ -483,11 +678,24 @@ async def process_inbound_event(
                     settings=settings,
                 )
 
+    outbound_metadata: dict[str, object] = {}
     if scoped_event.media:
         filename = next((media.filename for media in scoped_event.media if media.filename), None)
         reply = build_upload_processed_message(filename=filename, parse_result=parse_result)
     else:
         reply = build_confirmation_message(parse_result)
+
+    if (
+        parse_result.intent == "other"
+        and not parse_result.work_logs
+        and parse_result.confidence < 0.5
+    ):
+        outbound_metadata["fallback"] = True
+        reply = (
+            "I may be misunderstanding this. Reply help to see commands, status to see "
+            "current drafts, edit 1: <correction> to fix a draft, or report this <problem> "
+            "to send the conversation to the developer."
+        )
 
     if generated_reports:
         lines = [reply, "", "Generated report file(s):"]
@@ -515,6 +723,7 @@ async def process_inbound_event(
             conversation,
             body_text=reply,
             platform=scoped_event.platform,
+            metadata=outbound_metadata or None,
         )
 
     return ChatProcessingResult(

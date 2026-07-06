@@ -87,6 +87,19 @@ def export_conversation(conversation_id: str | None) -> dict[str, Any]:
             ),
             {"id": cid},
         ).mappings().all()
+        escalations = conn.execute(
+            text(
+                """
+                SELECT id, raw_message_id, report_text, status, destination,
+                       provider_message_id, error_text, created_at, sent_at,
+                       conversation_snapshot_json
+                FROM developer_escalations
+                WHERE conversation_id = :id
+                ORDER BY created_at ASC
+                """
+            ),
+            {"id": cid},
+        ).mappings().all()
 
     return {
         "conversation": _row_dict(conversation),
@@ -120,6 +133,16 @@ def export_conversation(conversation_id: str | None) -> dict[str, Any]:
                 "output": _json_loads(audit.get("output_json"), None),
             }
             for audit in audits
+        ],
+        "developer_escalations": [
+            {
+                **_row_dict(escalation),
+                "conversation_snapshot": _json_loads(
+                    escalation.get("conversation_snapshot_json"),
+                    {},
+                ),
+            }
+            for escalation in escalations
         ],
     }
 
