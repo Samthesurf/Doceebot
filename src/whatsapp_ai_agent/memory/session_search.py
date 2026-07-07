@@ -89,7 +89,7 @@ work_log_matches AS (
           ) > 0.1
       )
       AND (:search_closed OR cs.id IS NULL OR cs.status = 'active')
-      AND (:user_id IS NULL OR COALESCE(cs.user_id, wle.user_id) = :user_id)
+      AND (CAST(:user_id AS UUID) IS NULL OR COALESCE(cs.user_id, wle.user_id) = CAST(:user_id AS UUID))
 ),
 turn_matches AS (
     SELECT
@@ -119,7 +119,7 @@ turn_matches AS (
           OR similarity(COALESCE(ct.body_text, ''), :query) > 0.1
       )
       AND (:search_closed OR cs.status = 'active')
-      AND (:user_id IS NULL OR cs.user_id = :user_id)
+      AND (CAST(:user_id AS UUID) IS NULL OR cs.user_id = CAST(:user_id AS UUID))
 ),
 session_matches AS (
     SELECT
@@ -137,7 +137,7 @@ session_matches AS (
     WHERE cs.org_id = :org_id
       AND similarity(COALESCE(cs.title, ''), :query) > 0.1
       AND (:search_closed OR cs.status = 'active')
-      AND (:user_id IS NULL OR cs.user_id = :user_id)
+      AND (CAST(:user_id AS UUID) IS NULL OR cs.user_id = CAST(:user_id AS UUID))
 )
 SELECT *
 FROM (
@@ -219,6 +219,7 @@ class SessionSearcher:
                 return [self._row_to_result(row) for row in rows]
             except SQLAlchemyError:
                 logger.warning("Hybrid session search failed, falling back to LIKE search", exc_info=True)
+                self.session.rollback()
 
         return self._fallback_search(
             query=query,
