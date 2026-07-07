@@ -1,6 +1,7 @@
 import json
 import logging
 from dataclasses import dataclass, field
+from hashlib import sha256
 from pathlib import Path
 from typing import Literal, Protocol
 from uuid import UUID
@@ -48,6 +49,45 @@ from whatsapp_ai_agent.memory.work_logs import (
 )
 
 logger = logging.getLogger(__name__)
+
+_GREETING_PATTERNS = (
+    r"^hi+\s*$|^h+i+\s*$",
+    r"^hello+\s*$",
+    r"^hey+\s*$",
+    r"^hallo+\s*$",
+    r"^howdy+\s*$",
+    r"^yo+\s*$|^yoo+\s*$",
+    r"^good\s*(morning|afternoon|evening)\s*$",
+    r"^greetings\s*$|^hiya+\s*$|^holla+\s*$|^helo+\s*$",
+)
+
+_GREETING_RE = __import__("re").compile("|".join(_GREETING_PATTERNS), __import__("re").IGNORECASE)
+
+_GREETING_REPLIES = (
+    "Hi there! What can I help you document today?",
+    "Hello! Ready to log some work? Send me the update and I will turn it into a draft log.",
+    "Hey! Tell me what you worked on and I will keep the record for you.",
+    "Hi! I can take your work updates, photos, or voice notes and save them as "
+    "neat draft logs. What are we logging today?",
+)
+
+
+def _is_greeting(text: str | None) -> bool:
+    normalized = (text or "").strip().lower()
+    if not normalized:
+        return False
+    # Only treat short, greeting-shaped messages as greetings. A real work update
+    # like "hi there please log this" must still reach the LLM.
+    word_count = len(normalized.split())
+    if word_count > 3:
+        return False
+    return bool(_GREETING_RE.match(normalized))
+
+
+def _greeting_reply(text: str | None) -> str:
+    normalized = (text or "").strip().lower()
+    digest = sha256(normalized.encode("utf-8")).hexdigest()
+    return _GREETING_REPLIES[int(digest, 16) % len(_GREETING_REPLIES)]
 
 _GENERIC_CONTENT_TYPES = {"application/octet-stream", "binary/octet-stream"}
 _GEMINI_SUPPORTED_DOCUMENT_TYPES = {"application/pdf"}
@@ -292,6 +332,35 @@ async def process_inbound_event(
     conversation = None
     conversation_context: ConversationContext | None = None
     conversation_repo: ConversationRepository | None = None
+
+    # Warm, instant greeting replies. These never reach the LLM, so a casual
+    # "hi", "hello", or "Hellooo" gets a friendly human response instead of a
+    # robotic fallback or an empty "Worker sent a greeting" line.
+    if (
+        scoped_event.message_type == "text"
+        and not scoped_event.media
+        and _is_greeting(scoped_event.text)
+    ):
+        reply = _greeting_reply(scoped_event.text)
+        if db_session is not None:
+            conversation_repo = ConversationRepository(db_session)
+            conversation, _created = conversation_repo.get_or_create_for_event(
+                scoped_event,
+                force_new=starts_new_conversation(scoped_event),
+            )
+            conversation_repo.log_inbound_event(
+                conversation,
+                scoped_event,
+                metadata={"command": "greeting", "intent": "greeting"},
+            )
+            conversation_repo.log_outbound_reply(
+                conversation,
+                body_text=reply,
+                platform=scoped_event.platform,
+                metadata={"command_response": "greeting"},
+            )
+            db_session.commit()
+        return _result_for_reply(reply, conversation.id if conversation is not None else None)
 
     if db_session is not None:
         conversation_repo = ConversationRepository(db_session)

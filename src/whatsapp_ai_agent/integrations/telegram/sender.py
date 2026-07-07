@@ -14,6 +14,10 @@ class TelegramSender:
     async def send_text(self, *, chat_id: str | int, text: str) -> None:
         await self.bot.send_message(chat_id=chat_id, text=text)
 
+    async def send_typing(self, *, chat_id: str | int) -> None:
+        """Show the native 'typing…' indicator on Telegram while we work."""
+        await self.bot.send_chat_action(chat_id=chat_id, action="typing")
+
     async def send_document(
         self,
         *,

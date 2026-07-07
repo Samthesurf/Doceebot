@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+from logging import getLogger
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, Protocol
@@ -23,6 +24,8 @@ from whatsapp_ai_agent.security.webhooks import validate_telegram_secret_header
 from whatsapp_ai_agent.workflows.chat_processing import process_inbound_event
 
 router = APIRouter(tags=["telegram"])
+
+logger = getLogger(__name__)
 
 
 class TelegramDocumentSender(Protocol):
@@ -163,6 +166,13 @@ async def process_live_telegram_event_result(
         return TelegramProcessingOutcome(
             reply_text=build_unresolved_scope_message(event, resolution)
         )
+
+    if event.platform_chat_id is not None:
+        try:
+            sender = TelegramSender(settings=settings)
+            await sender.send_typing(chat_id=event.platform_chat_id)
+        except Exception:
+            logger.warning("Telegram typing indicator failed", exc_info=True)
 
     result = await process_inbound_event(
         resolution.event,

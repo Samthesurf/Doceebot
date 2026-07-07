@@ -5,7 +5,7 @@ import pytest
 
 from whatsapp_ai_agent.core.events import InboundEvent, MediaRef
 from whatsapp_ai_agent.llm.schemas import ChatParseResult, WorkLogDraft
-from whatsapp_ai_agent.workflows.chat_processing import process_inbound_event
+from whatsapp_ai_agent.workflows.chat_processing import _is_greeting, process_inbound_event
 
 
 class FakeNormalizer:
@@ -108,3 +108,52 @@ async def test_process_inbound_event_requires_tenant_scope_before_ai():
             normalizer=FakeNormalizer(),
             store_reports=False,
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "greeting",
+    ["hi", "Hi", "hiii", "hello", "Hellooo", "hey", "HEY", "yo", "good morning", "good evening"],
+)
+async def test_process_inbound_event_replies_warmly_to_greetings(greeting):
+    result = await process_inbound_event(
+        make_event(text=greeting),
+        org_id=uuid4(),
+        user_id=uuid4(),
+        normalizer=FakeNormalizer(),
+        store_reports=False,
+    )
+
+    assert result.reply_text
+    assert "I may be misunderstanding" not in result.reply_text
+    assert "Worker sent a greeting" not in result.reply_text
+    assert result.reply_text[0].isupper()
+
+
+@pytest.mark.asyncio
+async def test_process_inbound_event_greeting_does_not_call_normalizer():
+    calls = []
+
+    class RecordingNormalizer:
+        async def parse_chat_event(self, event, *, media_extractions=None):
+            calls.append(event)
+            raise AssertionError("greeting should not reach the LLM normalizer")
+
+    await process_inbound_event(
+        make_event(text="Hellooo"),
+        org_id=uuid4(),
+        user_id=uuid4(),
+        normalizer=RecordingNormalizer(),
+        store_reports=False,
+    )
+
+    assert calls == []
+
+
+def test_greeting_helper_classifies_common_cases():
+    assert _is_greeting("hi")
+    assert _is_greeting("Hellooo")
+    assert _is_greeting("good afternoon")
+    assert not _is_greeting("Completed DB dressing")
+    assert not _is_greeting("hi there can you log this")
+    assert not _is_greeting("")

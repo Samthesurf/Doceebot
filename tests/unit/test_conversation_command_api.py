@@ -133,8 +133,8 @@ async def test_01_help_command_returns_capabilities_without_llm(db_session):
         store_reports=False,
     )
 
-    assert "Core commands" in reply.reply_text
     assert "report this <problem>" in reply.reply_text
+    assert "work-log assistant" in reply.reply_text
     outbound = db_session.scalar(
         select(ConversationTurn).where(ConversationTurn.direction == "outbound")
     )

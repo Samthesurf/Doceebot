@@ -142,5 +142,24 @@ async def receive_twilio_whatsapp(
             media_type="application/xml",
         )
 
+    # Twilio has no typing indicator. Send a short "thinking" message first so the
+    # chat is never blank during the 10 to 15 second AI turn, then the real reply
+    # follows as a normal follow-up message.
+    background_tasks.add_task(_send_interim_thinking_message, event, settings=settings)
+
     body = await process_live_twilio_event(event, settings=settings, db_session=db_session)
     return Response(content=text_messaging_response(body), media_type="application/xml")
+
+
+_INTERIM_THINKING_MESSAGE = (
+    "Got it, working on that now. Give me a few seconds and I will send your draft."
+)
+
+
+async def _send_interim_thinking_message(event: InboundEvent, *, settings: Settings) -> None:
+    """Twilio has no typing indicator, so send a short 'thinking' message first."""
+    try:
+        await send_twilio_text_reply(event, _INTERIM_THINKING_MESSAGE, settings=settings)
+    except Exception:
+        logger.warning("Twilio interim thinking message failed", exc_info=True)
+

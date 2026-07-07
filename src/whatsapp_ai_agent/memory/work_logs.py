@@ -402,24 +402,29 @@ def build_draft_board_message(
 def build_help_message() -> str:
     return "\n".join(
         [
-            "I can keep a work-log conversation open and maintain multiple draft logs.",
+            "I am your work-log assistant, and I am happy to help you keep tidy records.",
+            "Think of me as a colleague who never gets tired of writing things down.",
             "",
-            "Core commands:",
-            "- status or show drafts: see the current draft board",
-            "- edit 1: <correction>: update a draft with more details",
-            "- split 1: <how to split it>: split one draft into multiple logs",
-            "- merge 1 and 2: combine drafts",
-            "- delete 2: remove a draft",
-            "- undo: restore the previous draft board",
-            "- confirm 1 or confirm all: confirm drafts",
-            "- cancel: discard active draft logs and close the session",
-            "- new: start a fresh work-log conversation",
-            "- export: show the current conversation id for audit export",
-            "- forget this session: delete this conversation's stored data",
-            "- search <query>: find matching past sessions, work logs, and messages",
-            "- report this <problem>: send this conversation and your note to the dev",
+            "Here is what I can do for you:",
+            "- Just send me a message about the work you did, and I will save it as a draft log.",
+            "- Send photos, documents, or a voice note, and I will pull the work details from it.",
+            "- status or show drafts: let you peek at the current draft board.",
+            "- edit 1: <correction>: let you add more detail to a draft.",
+            "- split 1: <how to split it>: break one long draft into separate logs.",
+            "- merge 1 and 2: join drafts that belong to the same job.",
+            "- delete 2: remove a draft you no longer need.",
+            "- undo: bring back the previous draft board if something went wrong.",
+            "- confirm 1 or confirm all: approve your drafts so they are locked in.",
+            "- cancel: discard the active drafts and close the session.",
+            "- new: start a fresh work-log conversation.",
+            "- export: give you the current conversation id for audit export.",
+            "- forget this session: remove this conversation's stored data.",
+            "- search <query>: look back through past sessions, work logs, and messages.",
+            "- report this <problem>: send this conversation and your note to the developer.",
             "",
-            "You can also just send text, photos, documents, or voice notes naturally.",
+            "I keep the conversation open and hold several draft logs at once, so you can "
+            "build up a day's work step by step. Whenever you are ready, just tell me what "
+            "you worked on.",
         ]
     )
 

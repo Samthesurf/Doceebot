@@ -103,20 +103,25 @@ async def test_receive_twilio_media_returns_ack_and_defers_processing(monkeypatc
 @pytest.mark.asyncio
 async def test_receive_twilio_text_keeps_final_reply_in_webhook(monkeypatch):
     processed: list[str] = []
+    interim_sent: list[InboundEvent] = []
 
     async def fake_process_live_twilio_event(event, *, settings, db_session):
         processed.append(db_session)
         return "Final text reply"
 
+    async def fake_send_interim(event, *, settings):
+        interim_sent.append(event)
+
     monkeypatch.setattr(webhook, "process_live_twilio_event", fake_process_live_twilio_event)
+    monkeypatch.setattr(webhook, "_send_interim_thinking_message", fake_send_interim)
 
     background_tasks = BackgroundTasks()
     response = await webhook.receive_twilio_whatsapp(
         FakeRequest(
             {
                 "MessageSid": "SMTEXT123",
-                "From": "whatsapp:+2348012345678",
-                "To": "whatsapp:+14155238886",
+                "From": "whatsapp:+234****5678",
+                "To": "whatsapp:+141****8886",
                 "WaId": "2348012345678",
                 "Body": "Completed DB dressing",
                 "NumMedia": "0",
@@ -129,7 +134,10 @@ async def test_receive_twilio_text_keeps_final_reply_in_webhook(monkeypatch):
 
     assert b"Final text reply" in response.body
     assert processed == ["request-db-session"]
-    assert background_tasks.tasks == []
+    assert background_tasks.tasks  # interim thinking message is queued
+    await background_tasks()  # drain so the interim message actually sends
+    assert len(interim_sent) == 1
+    assert interim_sent[0].platform_message_id == "SMTEXT123"
 
 
 @pytest.mark.asyncio
