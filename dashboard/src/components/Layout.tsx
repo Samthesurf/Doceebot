@@ -72,7 +72,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, currentPath, onNavigat
             <button
               key={item.path}
               className={`nav-link ${currentPath === item.path ? 'active' : ''}`}
-              style={{ background: 'none', border: 'none', width: '100%', textAlign: 'left', cursor: 'pointer' }}
+              style={{ border: 'none', width: '100%', textAlign: 'left', cursor: 'pointer' }}
               onClick={() => handleNavClick(item.path)}
             >
               {item.icon}
@@ -129,7 +129,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, currentPath, onNavigat
             <button
               key={item.path}
               className={`nav-link ${currentPath === item.path ? 'active' : ''}`}
-              style={{ background: 'none', border: 'none', width: '100%', cursor: 'pointer' }}
+              style={{ border: 'none', width: '100%', cursor: 'pointer' }}
               onClick={() => handleNavClick(item.path)}
             >
               {item.icon}
