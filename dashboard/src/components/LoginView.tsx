@@ -1,7 +1,9 @@
 import React, { useState } from 'react';
+import { Cpu, Eye, EyeOff, KeyRound, Lock, Mail, ShieldAlert } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { isFirebaseConfigured } from '../firebase';
-import { Lock, ShieldAlert, Cpu } from 'lucide-react';
+
+const googleLogoUrl = `${import.meta.env.BASE_URL}google_g_logo.svg`;
 
 export const LoginView: React.FC = () => {
   const {
@@ -16,6 +18,7 @@ export const LoginView: React.FC = () => {
   } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
 
   const handleGoogleLogin = async () => {
@@ -46,81 +49,121 @@ export const LoginView: React.FC = () => {
         <div className="login-icon">
           <Lock size={32} />
         </div>
-        
+
         <h1>Doceebot</h1>
         <p>Supervisor &amp; Administrator Dashboard</p>
 
         {error && (
-          <div className="badge badge-error" style={{ display: 'block', margin: '0 auto 1.5rem', width: 'fit-content' }}>
+          <div className="badge badge-error login-error">
             {error}
           </div>
         )}
 
         {isFirebaseConfigured ? (
-          <div>
-            <div className="demo-badge">Firebase Enabled</div>
-            <button 
-              className="btn btn-primary" 
-              style={{ width: '100%', marginBottom: '1rem' }} 
+          <div className="auth-panel">
+            <form className="auth-form" onSubmit={handleEmailAuth}>
+              <label className="auth-field">
+                <span>Email address</span>
+                <div className="input-shell">
+                  <Mail className="auth-field-icon" size={18} />
+                  <input
+                    className="form-input input-with-icon"
+                    type="email"
+                    placeholder="engineer@example.com"
+                    value={email}
+                    onChange={(event) => setEmail(event.target.value)}
+                    disabled={loading}
+                    autoComplete="email"
+                  />
+                </div>
+              </label>
+
+              <label className="auth-field">
+                <span>Password</span>
+                <div className="input-shell">
+                  <KeyRound className="auth-field-icon" size={18} />
+                  <input
+                    className="form-input input-with-icon"
+                    type={showPassword ? 'text' : 'password'}
+                    placeholder="Enter your password"
+                    value={password}
+                    onChange={(event) => setPassword(event.target.value)}
+                    disabled={loading}
+                    autoComplete={authMode === 'login' ? 'current-password' : 'new-password'}
+                  />
+                  <button
+                    aria-label={showPassword ? 'Hide password' : 'Show password'}
+                    className="auth-password-toggle"
+                    disabled={loading}
+                    onClick={() => setShowPassword((value) => !value)}
+                    type="button"
+                  >
+                    {showPassword ? <EyeOff size={17} /> : <Eye size={17} />}
+                  </button>
+                </div>
+              </label>
+
+              <button className="btn btn-primary auth-submit" type="submit" disabled={loading}>
+                {loading ? (
+                  <div className="spinner spinner-small" />
+                ) : authMode === 'login' ? (
+                  'Sign in'
+                ) : (
+                  'Create email account'
+                )}
+              </button>
+            </form>
+
+            <div className="auth-divider" aria-hidden="true">
+              <span>OR</span>
+            </div>
+
+            <button
+              className="google-button"
+              type="button"
               onClick={handleGoogleLogin}
               disabled={loading}
             >
-              {loading ? <div className="spinner" style={{ width: '18px', height: '18px' }} /> : 'Sign in with Google'}
+              {loading ? (
+                <div className="spinner spinner-small" />
+              ) : (
+                <>
+                  <img className="google-logo" src={googleLogoUrl} alt="" aria-hidden="true" />
+                  <span>Sign in with Google</span>
+                </>
+              )}
             </button>
 
-            <form onSubmit={handleEmailAuth} style={{ display: 'grid', gap: '0.75rem', marginBottom: '1rem' }}>
-              <input
-                className="form-input"
-                type="email"
-                placeholder="Admin email"
-                value={email}
-                onChange={(event) => setEmail(event.target.value)}
-                disabled={loading}
-                autoComplete="email"
-              />
-              <input
-                className="form-input"
-                type="password"
-                placeholder="Password"
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-                disabled={loading}
-                autoComplete={authMode === 'login' ? 'current-password' : 'new-password'}
-              />
-              <button className="btn btn-secondary" type="submit" disabled={loading}>
-                {authMode === 'login' ? 'Sign in with email' : 'Create email account'}
-              </button>
+            <button
+              className="link-button auth-switch"
+              type="button"
+              onClick={() => setAuthMode(authMode === 'login' ? 'register' : 'login')}
+              disabled={loading}
+            >
+              {authMode === 'login'
+                ? 'Need an email/password account? Register here.'
+                : 'Already registered? Sign in instead.'}
+            </button>
+
+            <div className="auth-helper">Authorized emails only.</div>
+
+            <div className="demo-entry">
               <button
-                className="link-button"
-                type="button"
-                onClick={() => setAuthMode(authMode === 'login' ? 'register' : 'login')}
-                disabled={loading}
-              >
-                {authMode === 'login'
-                  ? 'Need an email/password account? Register here.'
-                  : 'Already registered? Sign in instead.'}
-              </button>
-            </form>
-            <div style={{ fontSize: '0.8rem', color: 'var(--brown-400)' }}>
-              Authorized emails only.
-            </div>
-            
-            <div style={{ marginTop: '2rem', borderTop: '1px solid var(--brown-100)', paddingTop: '1rem' }}>
-              <button 
                 className="btn btn-secondary btn-small"
+                type="button"
                 onClick={() => {
                   toggleDemoMode(true);
                   loginDemo();
                 }}
               >
-                Or enter Demo mode
+                Preview demo workspace
               </button>
             </div>
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-            <div 
-              style={{ 
+            <div
+              style={{
                 background: 'rgba(200, 150, 62, 0.08)',
                 border: '1px solid #FFE0B2',
                 borderRadius: '8px',
@@ -137,8 +180,8 @@ export const LoginView: React.FC = () => {
               Vite environment variables (e.g. <code>VITE_FIREBASE_API_KEY</code>) are not defined. The app will run in Demo Mode.
             </div>
 
-            <button 
-              className="btn btn-primary" 
+            <button
+              className="btn btn-primary"
               style={{ width: '100%' }}
               onClick={loginDemo}
               disabled={loading}
