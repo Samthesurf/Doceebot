@@ -290,7 +290,7 @@ export const LogsView: React.FC = () => {
             <>
               {/* Turn Viewer Header */}
               <div className="turns-viewer-header">
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                <div className="turns-viewer-meta">
                   <div>
                     <h2 style={{ marginBottom: '0.25rem' }}>{selectedSession.user_name || 'Worker Audit'}</h2>
                     <p style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem' }}>
@@ -308,20 +308,27 @@ export const LogsView: React.FC = () => {
                   </div>
                 </div>
                 
-                <div style={{ display: 'flex', gap: '1.5rem', marginTop: '1rem', borderTop: '1px solid var(--brown-100)', paddingTop: '0.75rem', fontSize: '0.8rem', color: 'var(--brown-600)' }}>
-                  <div>
-                    <strong>Total Conversation Turns:</strong> {selectedSession.turn_count}
-                  </div>
-                  <div>
-                    <strong>Work Logs Logged:</strong> {selectedSession.work_log_count}
-                  </div>
-                  <div>
-                    <strong>Escalations Flagged:</strong> {selectedSession.escalation_count}
-                  </div>
-                  <div>
-                    <strong>Started:</strong> {formatDate(selectedSession.started_at)}
+                <div className="summary-strip-shell">
+                  <div className="summary-strip">
+                    <div className="summary-card">
+                      <span className="summary-card-label">Conversation Turns</span>
+                      <strong className="summary-card-value">{selectedSession.turn_count}</strong>
+                    </div>
+                    <div className="summary-card">
+                      <span className="summary-card-label">Work Logs</span>
+                      <strong className="summary-card-value">{selectedSession.work_log_count}</strong>
+                    </div>
+                    <div className="summary-card">
+                      <span className="summary-card-label">Escalations</span>
+                      <strong className="summary-card-value">{selectedSession.escalation_count}</strong>
+                    </div>
+                    <div className="summary-card">
+                      <span className="summary-card-label">Started</span>
+                      <strong className="summary-card-value summary-card-value-date">{formatDate(selectedSession.started_at)}</strong>
+                    </div>
                   </div>
                 </div>
+                <div className="summary-scroll-hint">Swipe for more stats →</div>
               </div>
 
               {/* Turns List Bubble Stream */}

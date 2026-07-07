@@ -403,7 +403,7 @@ export const DashboardView: React.FC = () => {
       )}
 
       {/* Main Tabbed Explorer */}
-      <div className="glass-card" style={{ padding: '2rem' }}>
+      <div className="glass-card main-explorer-card">
         <div className="tabs-nav">
           <button
             className={`tab-btn ${activeTab === 'orgs' ? 'active' : ''}`}
@@ -481,7 +481,7 @@ export const DashboardView: React.FC = () => {
             </div>
 
             {/* Member & Access Administration Section */}
-            <div style={{ borderTop: '1px solid var(--brown-100)', paddingTop: '2.5rem', marginTop: '1rem' }}>
+            <div className="member-admin-section">
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
                 <div>
                   <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
@@ -511,9 +511,9 @@ export const DashboardView: React.FC = () => {
                   <strong>Failed to load manageable organizations:</strong> {adminAccessError}
                 </div>
               ) : (
-                <div className="dashboard-row">
+                <div className="dashboard-row member-admin-row">
                   {/* Left Column: Org Selector & Existing Members List */}
-                  <div className="glass-card" style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+                  <div className="glass-card member-admin-card">
                     <div>
                       <label className="form-label" htmlFor="admin-org-select">Manage Organization</label>
                       <select
@@ -556,57 +556,100 @@ export const DashboardView: React.FC = () => {
                             {membersError}
                           </div>
                         ) : (
-                          <div className="table-wrapper" style={{ overflowY: 'auto', maxHeight: '400px' }}>
-                            <table className="data-table" style={{ fontSize: '0.85rem' }}>
-                              <thead>
-                                <tr>
-                                  <th>Name</th>
-                                  <th>Identifier</th>
-                                  <th>Role</th>
-                                  <th>Joined</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {members.map((member) => (
-                                  <tr key={member.user_id}>
-                                    <td style={{ fontWeight: 'bold' }}>{member.display_name || 'Unnamed'}</td>
-                                    <td>
-                                      {member.phone_number ? (
-                                        <div style={{ display: 'flex', flexDirection: 'column' }}>
-                                          <span style={{ fontSize: '0.7rem', color: 'var(--brown-400)', textTransform: 'uppercase', fontWeight: 600 }}>WhatsApp</span>
-                                          <span>{member.phone_number}</span>
-                                        </div>
-                                      ) : member.telegram_user_id ? (
-                                        <div style={{ display: 'flex', flexDirection: 'column' }}>
-                                          <span style={{ fontSize: '0.7rem', color: 'var(--brown-400)', textTransform: 'uppercase', fontWeight: 600 }}>Telegram</span>
-                                          <span>@{member.telegram_user_id}</span>
-                                        </div>
-                                      ) : (
-                                        <span style={{ color: 'var(--brown-300)' }}>No identifier</span>
-                                      )}
-                                    </td>
-                                    <td>
-                                      <span className={`badge ${getRoleBadgeClass(member.role)}`} style={{ fontSize: '0.75rem' }}>
-                                        {formatRoleLabel(member.role)}
-                                      </span>
-                                    </td>
-                                    <td>{formatDate(member.created_at)}</td>
-                                  </tr>
-                                ))}
-                                {members.length === 0 && (
+                          <>
+                            <div className="table-wrapper member-table-wrapper member-table-desktop">
+                              <table className="data-table" style={{ fontSize: '0.85rem' }}>
+                                <thead>
                                   <tr>
-                                    <td colSpan={4} style={{ textAlign: 'center', color: 'var(--brown-400)', padding: '2rem' }}>
-                                      No members found in this organization.
-                                    </td>
+                                    <th>Name</th>
+                                    <th>Identifier</th>
+                                    <th>Role</th>
+                                    <th>Joined</th>
                                   </tr>
-                                )}
-                              </tbody>
-                            </table>
-                          </div>
+                                </thead>
+                                <tbody>
+                                  {members.map((member) => (
+                                    <tr key={member.user_id}>
+                                      <td style={{ fontWeight: 'bold' }}>{member.display_name || 'Unnamed'}</td>
+                                      <td>
+                                        {member.phone_number ? (
+                                          <div style={{ display: 'flex', flexDirection: 'column' }}>
+                                            <span style={{ fontSize: '0.7rem', color: 'var(--brown-400)', textTransform: 'uppercase', fontWeight: 600 }}>WhatsApp</span>
+                                            <span>{member.phone_number}</span>
+                                          </div>
+                                        ) : member.telegram_user_id ? (
+                                          <div style={{ display: 'flex', flexDirection: 'column' }}>
+                                            <span style={{ fontSize: '0.7rem', color: 'var(--brown-400)', textTransform: 'uppercase', fontWeight: 600 }}>Telegram</span>
+                                            <span>@{member.telegram_user_id}</span>
+                                          </div>
+                                        ) : (
+                                          <span style={{ color: 'var(--brown-300)' }}>No identifier</span>
+                                        )}
+                                      </td>
+                                      <td>
+                                        <span className={`badge ${getRoleBadgeClass(member.role)}`} style={{ fontSize: '0.75rem' }}>
+                                          {formatRoleLabel(member.role)}
+                                        </span>
+                                      </td>
+                                      <td>{formatDate(member.created_at)}</td>
+                                    </tr>
+                                  ))}
+                                  {members.length === 0 && (
+                                    <tr>
+                                      <td colSpan={4} style={{ textAlign: 'center', color: 'var(--brown-400)', padding: '2rem' }}>
+                                        No members found in this organization.
+                                      </td>
+                                    </tr>
+                                  )}
+                                </tbody>
+                              </table>
+                            </div>
+
+                            <div className="member-mobile-list">
+                              {members.map((member) => (
+                                <article key={`${member.user_id}-mobile`} className="member-mobile-card">
+                                  <div className="member-mobile-card-header">
+                                    <div>
+                                      <div className="member-mobile-name">{member.display_name || 'Unnamed'}</div>
+                                      <div className="member-mobile-meta-label">Member Identifier</div>
+                                    </div>
+                                    <span className={`badge ${getRoleBadgeClass(member.role)}`} style={{ fontSize: '0.75rem' }}>
+                                      {formatRoleLabel(member.role)}
+                                    </span>
+                                  </div>
+
+                                  <div className="member-mobile-detail">
+                                    {member.phone_number ? (
+                                      <>
+                                        <span className="member-mobile-meta-label">WhatsApp</span>
+                                        <span>{member.phone_number}</span>
+                                      </>
+                                    ) : member.telegram_user_id ? (
+                                      <>
+                                        <span className="member-mobile-meta-label">Telegram</span>
+                                        <span>@{member.telegram_user_id}</span>
+                                      </>
+                                    ) : (
+                                      <span style={{ color: 'var(--brown-300)' }}>No identifier</span>
+                                    )}
+                                  </div>
+
+                                  <div className="member-mobile-detail">
+                                    <span className="member-mobile-meta-label">Joined</span>
+                                    <span>{formatDate(member.created_at)}</span>
+                                  </div>
+                                </article>
+                              ))}
+
+                              {members.length === 0 && (
+                                <div className="member-mobile-empty">No members found in this organization.</div>
+                              )}
+                            </div>
+                          </>
                         )}
                       </div>
                     ) : (
-                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '4rem 2rem', border: '2px dashed var(--brown-200)', borderRadius: '12px', color: 'var(--brown-400)', textAlign: 'center' }}>
+                      <div className="member-empty-state">
                         <Users size={36} style={{ marginBottom: '1rem', opacity: 0.5, color: 'var(--brown-300)' }} />
                         <p style={{ color: 'var(--brown-500)' }}>Select an organization above to view its member registry and register new users.</p>
                       </div>
@@ -614,7 +657,7 @@ export const DashboardView: React.FC = () => {
                   </div>
 
                   {/* Right Column: Add/Update Member Form */}
-                  <div className="glass-card" style={{ height: 'fit-content' }}>
+                  <div className="glass-card member-form-card">
                     <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1.25rem', fontSize: '1.15rem' }}>
                       <UserPlus size={18} style={{ color: 'var(--brown-700)' }} />
                       Add or Update Member
