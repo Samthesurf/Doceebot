@@ -23,6 +23,14 @@
     {
       "pattern": "doceebot.name.ng/logs/*",
       "zone_name": "doceebot.name.ng"
+    },
+    {
+      "pattern": "doceebot.name.ng/token-usage",
+      "zone_name": "doceebot.name.ng"
+    },
+    {
+      "pattern": "doceebot.name.ng/token-usage/*",
+      "zone_name": "doceebot.name.ng"
     }
   ],
   "observability": {

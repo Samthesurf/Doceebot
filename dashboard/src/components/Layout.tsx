@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { isFirebaseConfigured } from '../firebase';
-import { LayoutDashboard, ReceiptText, LogOut, Menu, X, Globe, Cpu } from 'lucide-react';
+import { LayoutDashboard, ReceiptText, LogOut, Menu, X, Globe, Cpu, WalletCards } from 'lucide-react';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -15,6 +15,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, currentPath, onNavigat
 
   const navItems = [
     { label: 'Overview', path: '/dashboard', icon: <LayoutDashboard size={18} /> },
+    { label: 'Token Usage', path: '/token-usage', icon: <WalletCards size={18} /> },
     { label: 'Conversation Logs', path: '/logs', icon: <ReceiptText size={18} /> },
   ];
 

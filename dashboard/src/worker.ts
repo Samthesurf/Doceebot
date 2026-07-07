@@ -1,4 +1,12 @@
-const INDEX_PATHS = new Set(['/dashboard', '/dashboard/', '/dashboard/login', '/logs', '/logs/']);
+const INDEX_PATHS = new Set([
+  '/dashboard',
+  '/dashboard/',
+  '/dashboard/login',
+  '/logs',
+  '/logs/',
+  '/token-usage',
+  '/token-usage/',
+]);
 
 function asAssetRequest(request: Request, pathname: string): Request {
   const url = new URL(request.url);

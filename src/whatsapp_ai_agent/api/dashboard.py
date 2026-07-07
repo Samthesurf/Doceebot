@@ -1,6 +1,6 @@
 import json
 import secrets
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Annotated
 from uuid import UUID
 
@@ -121,6 +121,69 @@ class ConversationLogRow(BaseModel):
 
 class LogsResponse(BaseModel):
     conversations: list[ConversationLogRow]
+
+
+class TokenUsageTotals(BaseModel):
+    request_count: int = 0
+    success_count: int = 0
+    error_count: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+    average_total_tokens: float = 0.0
+    last_event_at: datetime | None = None
+    estimated: bool = True
+
+
+class TokenUsageBreakdownRow(BaseModel):
+    provider: str
+    model: str
+    purpose: str | None = None
+    request_count: int = 0
+    success_count: int = 0
+    error_count: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+    average_total_tokens: float = 0.0
+    first_seen_at: datetime | None = None
+    last_seen_at: datetime | None = None
+    estimated: bool = True
+
+
+class TokenUsageDailyRow(BaseModel):
+    date: str
+    request_count: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+    error_count: int = 0
+    estimated: bool = True
+
+
+class TokenUsageRecentRow(BaseModel):
+    id: UUID
+    conversation_id: UUID | None = None
+    provider: str
+    model: str
+    purpose: str
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+    status: str
+    created_at: datetime | None = None
+    estimated: bool = True
+
+
+class TokenUsageResponse(BaseModel):
+    generated_at: datetime
+    window_days: int
+    note: str
+    totals: TokenUsageTotals
+    by_model: list[TokenUsageBreakdownRow]
+    by_purpose: list[TokenUsageBreakdownRow]
+    daily: list[TokenUsageDailyRow]
+    recent: list[TokenUsageRecentRow]
 
 
 def _json_loads(value: str | None, fallback: object) -> object:
@@ -336,7 +399,7 @@ async def get_dashboard_overview(
     total_logs = draft_logs + confirmed_logs
     return OverviewResponse(
         user=user,
-        generated_at=datetime.utcnow(),
+        generated_at=datetime.now(UTC),
         cards=[
             MetricCard(label="Organizations", value=organizations, helper="Tenants connected"),
             MetricCard(label="Users", value=users, helper="Known bot users"),
@@ -478,6 +541,170 @@ async def list_dashboard_escalations(
         params,
     ).mappings()
     return EscalationsResponse(escalations=[EscalationDashboardRow(**dict(row)) for row in rows])
+
+
+_TOKEN_USAGE_NOTE = (
+    "Token counts are estimated from persisted, redacted LLM audit payload sizes "
+    "because historical provider usage metadata was not stored. Counts are safe for "
+    "trend monitoring and cost anomaly detection, but they are not billing-grade totals."
+)
+
+_TOKEN_USAGE_CTE = """
+WITH usage AS (
+    SELECT id,
+           conversation_id,
+           provider,
+           model,
+           purpose,
+           created_at,
+           error_text,
+           GREATEST(1, CEIL(length(COALESCE(input_json, '')) / 4.0))::int AS input_tokens,
+           GREATEST(0, CEIL(length(COALESCE(output_json, '')) / 4.0))::int AS output_tokens
+    FROM llm_audit_logs
+    WHERE created_at >= now() - (:window_days * interval '1 day')
+)
+"""
+
+
+@router.get("/token-usage", response_model=TokenUsageResponse)
+async def get_dashboard_token_usage(
+    window_days: Annotated[int, Query(ge=1, le=365)] = 30,
+    limit: Annotated[int, Query(ge=1, le=200)] = 100,
+    user: DashboardUser = Depends(require_dashboard_user),
+    db_session: Session = Depends(get_db_session),
+) -> TokenUsageResponse:
+    _ = user
+    params: dict[str, object] = {"window_days": window_days, "limit": limit}
+    totals_row = dict(
+        db_session.execute(
+            text(
+                _TOKEN_USAGE_CTE
+                + """
+                SELECT count(*)::int AS request_count,
+                       count(*) FILTER (WHERE error_text IS NULL)::int AS success_count,
+                       count(*) FILTER (WHERE error_text IS NOT NULL)::int AS error_count,
+                       COALESCE(sum(input_tokens), 0)::int AS input_tokens,
+                       COALESCE(sum(output_tokens), 0)::int AS output_tokens,
+                       COALESCE(sum(input_tokens + output_tokens), 0)::int AS total_tokens,
+                       round(COALESCE(avg(input_tokens + output_tokens), 0)::numeric, 2)::float
+                           AS average_total_tokens,
+                       max(created_at) AS last_event_at
+                FROM usage
+                """
+            ),
+            params,
+        ).mappings().one()
+    )
+    by_model = [
+        TokenUsageBreakdownRow(**dict(row))
+        for row in db_session.execute(
+            text(
+                _TOKEN_USAGE_CTE
+                + """
+                SELECT provider,
+                       model,
+                       NULL::text AS purpose,
+                       count(*)::int AS request_count,
+                       count(*) FILTER (WHERE error_text IS NULL)::int AS success_count,
+                       count(*) FILTER (WHERE error_text IS NOT NULL)::int AS error_count,
+                       COALESCE(sum(input_tokens), 0)::int AS input_tokens,
+                       COALESCE(sum(output_tokens), 0)::int AS output_tokens,
+                       COALESCE(sum(input_tokens + output_tokens), 0)::int AS total_tokens,
+                       round(COALESCE(avg(input_tokens + output_tokens), 0)::numeric, 2)::float
+                           AS average_total_tokens,
+                       min(created_at) AS first_seen_at,
+                       max(created_at) AS last_seen_at
+                FROM usage
+                GROUP BY provider, model
+                ORDER BY total_tokens DESC, request_count DESC, provider ASC, model ASC
+                LIMIT :limit
+                """
+            ),
+            params,
+        ).mappings()
+    ]
+    by_purpose = [
+        TokenUsageBreakdownRow(**dict(row))
+        for row in db_session.execute(
+            text(
+                _TOKEN_USAGE_CTE
+                + """
+                SELECT 'all'::text AS provider,
+                       'all'::text AS model,
+                       purpose,
+                       count(*)::int AS request_count,
+                       count(*) FILTER (WHERE error_text IS NULL)::int AS success_count,
+                       count(*) FILTER (WHERE error_text IS NOT NULL)::int AS error_count,
+                       COALESCE(sum(input_tokens), 0)::int AS input_tokens,
+                       COALESCE(sum(output_tokens), 0)::int AS output_tokens,
+                       COALESCE(sum(input_tokens + output_tokens), 0)::int AS total_tokens,
+                       round(COALESCE(avg(input_tokens + output_tokens), 0)::numeric, 2)::float
+                           AS average_total_tokens,
+                       min(created_at) AS first_seen_at,
+                       max(created_at) AS last_seen_at
+                FROM usage
+                GROUP BY purpose
+                ORDER BY total_tokens DESC, request_count DESC, purpose ASC
+                LIMIT :limit
+                """
+            ),
+            params,
+        ).mappings()
+    ]
+    daily = [
+        TokenUsageDailyRow(**dict(row))
+        for row in db_session.execute(
+            text(
+                _TOKEN_USAGE_CTE
+                + """
+                SELECT to_char(date_trunc('day', created_at), 'YYYY-MM-DD') AS date,
+                       count(*)::int AS request_count,
+                       COALESCE(sum(input_tokens), 0)::int AS input_tokens,
+                       COALESCE(sum(output_tokens), 0)::int AS output_tokens,
+                       COALESCE(sum(input_tokens + output_tokens), 0)::int AS total_tokens,
+                       count(*) FILTER (WHERE error_text IS NOT NULL)::int AS error_count
+                FROM usage
+                GROUP BY date_trunc('day', created_at)
+                ORDER BY date ASC
+                """
+            ),
+            params,
+        ).mappings()
+    ]
+    recent = [
+        TokenUsageRecentRow(**dict(row))
+        for row in db_session.execute(
+            text(
+                _TOKEN_USAGE_CTE
+                + """
+                SELECT id,
+                       conversation_id,
+                       provider,
+                       model,
+                       purpose,
+                       input_tokens,
+                       output_tokens,
+                       input_tokens + output_tokens AS total_tokens,
+                       CASE WHEN error_text IS NULL THEN 'success' ELSE 'error' END AS status,
+                       created_at
+                FROM usage
+                ORDER BY created_at DESC
+                LIMIT :limit
+                """
+            ),
+            params,
+        ).mappings()
+    ]
+    return TokenUsageResponse(
+        generated_at=datetime.now(UTC),
+        window_days=window_days,
+        note=_TOKEN_USAGE_NOTE,
+        totals=TokenUsageTotals(**totals_row),
+        by_model=by_model,
+        by_purpose=by_purpose,
+        daily=daily,
+        recent=recent,
+    )
 
 
 @router.get("/logs", response_model=LogsResponse)

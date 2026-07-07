@@ -6,6 +6,7 @@ import type {
   DocumentsDashboardResponse,
   EscalationsResponse,
   LogsResponse,
+  TokenUsageResponse,
 } from './types';
 
 // API base URL configuration
@@ -383,6 +384,123 @@ const MOCK_LOGS = {
   ],
 };
 
+const MOCK_TOKEN_USAGE: TokenUsageResponse = {
+  generated_at: new Date().toISOString(),
+  window_days: 30,
+  note: 'Demo token counts are estimated from simulated redacted LLM audit payload sizes.',
+  totals: {
+    request_count: 318,
+    success_count: 305,
+    error_count: 13,
+    input_tokens: 68420,
+    output_tokens: 24350,
+    total_tokens: 92770,
+    average_total_tokens: 291.73,
+    last_event_at: '2026-07-06T20:10:00Z',
+    estimated: true,
+  },
+  by_model: [
+    {
+      provider: 'deepseek',
+      model: 'deepseek-chat',
+      purpose: null,
+      request_count: 214,
+      success_count: 207,
+      error_count: 7,
+      input_tokens: 42100,
+      output_tokens: 18320,
+      total_tokens: 60420,
+      average_total_tokens: 282.34,
+      first_seen_at: '2026-06-08T10:00:00Z',
+      last_seen_at: '2026-07-06T20:10:00Z',
+      estimated: true,
+    },
+    {
+      provider: 'gemini',
+      model: 'gemini-2.5-flash',
+      purpose: null,
+      request_count: 104,
+      success_count: 98,
+      error_count: 6,
+      input_tokens: 26320,
+      output_tokens: 6030,
+      total_tokens: 32350,
+      average_total_tokens: 311.06,
+      first_seen_at: '2026-06-08T11:20:00Z',
+      last_seen_at: '2026-07-06T18:38:00Z',
+      estimated: true,
+    },
+  ],
+  by_purpose: [
+    {
+      provider: 'all',
+      model: 'all',
+      purpose: 'chat_parse',
+      request_count: 214,
+      success_count: 207,
+      error_count: 7,
+      input_tokens: 42100,
+      output_tokens: 18320,
+      total_tokens: 60420,
+      average_total_tokens: 282.34,
+      first_seen_at: '2026-06-08T10:00:00Z',
+      last_seen_at: '2026-07-06T20:10:00Z',
+      estimated: true,
+    },
+    {
+      provider: 'all',
+      model: 'all',
+      purpose: 'media_extraction',
+      request_count: 104,
+      success_count: 98,
+      error_count: 6,
+      input_tokens: 26320,
+      output_tokens: 6030,
+      total_tokens: 32350,
+      average_total_tokens: 311.06,
+      first_seen_at: '2026-06-08T11:20:00Z',
+      last_seen_at: '2026-07-06T18:38:00Z',
+      estimated: true,
+    },
+  ],
+  daily: [
+    { date: '2026-07-01', request_count: 38, input_tokens: 7800, output_tokens: 2600, total_tokens: 10400, error_count: 1, estimated: true },
+    { date: '2026-07-02', request_count: 52, input_tokens: 10340, output_tokens: 3880, total_tokens: 14220, error_count: 2, estimated: true },
+    { date: '2026-07-03', request_count: 44, input_tokens: 9550, output_tokens: 3200, total_tokens: 12750, error_count: 1, estimated: true },
+    { date: '2026-07-04', request_count: 62, input_tokens: 12800, output_tokens: 4520, total_tokens: 17320, error_count: 3, estimated: true },
+    { date: '2026-07-05', request_count: 70, input_tokens: 15100, output_tokens: 5200, total_tokens: 20300, error_count: 2, estimated: true },
+    { date: '2026-07-06', request_count: 52, input_tokens: 12830, output_tokens: 4950, total_tokens: 17780, error_count: 4, estimated: true },
+  ],
+  recent: [
+    {
+      id: 'a1111111-1111-4111-8111-111111111111',
+      conversation_id: 'c1c1c1c1-1111-4c4c-8c8c-111111111111',
+      provider: 'deepseek',
+      model: 'deepseek-chat',
+      purpose: 'chat_parse',
+      input_tokens: 255,
+      output_tokens: 112,
+      total_tokens: 367,
+      status: 'success',
+      created_at: '2026-07-06T20:10:00Z',
+      estimated: true,
+    },
+    {
+      id: 'a2222222-2222-4222-8222-222222222222',
+      conversation_id: 'c1c1c1c1-1111-4c4c-8c8c-111111111111',
+      provider: 'gemini',
+      model: 'gemini-2.5-flash',
+      purpose: 'media_extraction',
+      input_tokens: 410,
+      output_tokens: 58,
+      total_tokens: 468,
+      status: 'error',
+      created_at: '2026-07-06T18:38:00Z',
+      estimated: true,
+    },
+  ],
+};
+
 // ---------------------------------------------------------------------------
 // API Methods
 // ---------------------------------------------------------------------------
@@ -519,4 +637,26 @@ export const getLogs = async (
   }
   
   return fetchWithAuth<LogsResponse>('/logs', token, { headers });
+};
+
+export const getTokenUsage = async (
+  token: string | null,
+  windowDays = 30
+): Promise<TokenUsageResponse> => {
+  if (demoMode) {
+    return new Promise((resolve) =>
+      setTimeout(
+        () =>
+          resolve({
+            ...MOCK_TOKEN_USAGE,
+            generated_at: new Date().toISOString(),
+            window_days: windowDays,
+          }),
+        500
+      )
+    );
+  }
+
+  const params = new URLSearchParams({ window_days: String(windowDays) });
+  return fetchWithAuth<TokenUsageResponse>(`/token-usage?${params.toString()}`, token);
 };

@@ -136,3 +136,66 @@ export interface ConversationLogRow {
 export interface LogsResponse {
   conversations: ConversationLogRow[];
 }
+
+export interface TokenUsageTotals {
+  request_count: number;
+  success_count: number;
+  error_count: number;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  average_total_tokens: number;
+  last_event_at: string | null;
+  estimated: boolean;
+}
+
+export interface TokenUsageBreakdownRow {
+  provider: string;
+  model: string;
+  purpose: string | null;
+  request_count: number;
+  success_count: number;
+  error_count: number;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  average_total_tokens: number;
+  first_seen_at: string | null;
+  last_seen_at: string | null;
+  estimated: boolean;
+}
+
+export interface TokenUsageDailyRow {
+  date: string;
+  request_count: number;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  error_count: number;
+  estimated: boolean;
+}
+
+export interface TokenUsageRecentRow {
+  id: string;
+  conversation_id: string | null;
+  provider: string;
+  model: string;
+  purpose: string;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  status: string;
+  created_at: string | null;
+  estimated: boolean;
+}
+
+export interface TokenUsageResponse {
+  generated_at: string;
+  window_days: number;
+  note: string;
+  totals: TokenUsageTotals;
+  by_model: TokenUsageBreakdownRow[];
+  by_purpose: TokenUsageBreakdownRow[];
+  daily: TokenUsageDailyRow[];
+  recent: TokenUsageRecentRow[];
+}

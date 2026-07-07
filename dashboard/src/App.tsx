@@ -5,6 +5,7 @@ import { LoginView } from './components/LoginView';
 import { Layout } from './components/Layout';
 import { DashboardView } from './components/DashboardView';
 import { LogsView } from './components/LogsView';
+import { TokenUsageView } from './components/TokenUsageView';
 
 const AppRoutes: React.FC = () => {
   const { user, loading } = useAuth();
@@ -47,6 +48,7 @@ const AppRoutes: React.FC = () => {
     <Layout currentPath={location.pathname} onNavigate={(path) => navigate(path)}>
       <Routes>
         <Route path="/dashboard" element={<DashboardView />} />
+        <Route path="/token-usage" element={<TokenUsageView />} />
         <Route path="/logs" element={<LogsView />} />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>
