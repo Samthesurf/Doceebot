@@ -388,7 +388,30 @@ p {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 1rem;
   margin-bottom: 1.5rem;
+}
+
+.logs-header {
+  align-items: flex-start;
+}
+
+.logs-header-copy {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.logs-header-copy h1,
+.logs-header-copy p {
+  overflow-wrap: anywhere;
+}
+
+.logs-header-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  flex: 0 0 auto;
 }
 
 /* Custom Tabs */
@@ -1364,6 +1387,36 @@ p {
 @media (max-width: 768px) {
   .main-content {
     padding: 1rem;
+  }
+
+  .section-header {
+    align-items: flex-start;
+  }
+
+  .logs-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .logs-header-copy h1 {
+    font-size: clamp(1.4rem, 5.4vw, 1.75rem);
+    line-height: 1.15;
+    margin-bottom: 0.4rem;
+  }
+
+  .logs-header-copy p {
+    font-size: 0.92rem;
+  }
+
+  .logs-header-actions {
+    width: auto;
+    justify-content: flex-start;
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .logs-header-actions .btn {
+    flex: 0 0 auto;
   }
 
   .main-explorer-card {

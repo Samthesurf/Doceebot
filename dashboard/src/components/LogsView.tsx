@@ -196,16 +196,16 @@ export const LogsView: React.FC = () => {
   // 2. Main logs list and detail layout
   return (
     <div className="fade-in">
-      <div className="section-header" style={{ marginBottom: '1.5rem' }}>
-        <div>
+      <div className="section-header logs-header" style={{ marginBottom: '1.5rem' }}>
+        <div className="logs-header-copy">
           <h1>Conversation Logs &amp; Audit Trail</h1>
           <p>Auditing raw inbound webhooks, intent classification metrics, and responses.</p>
         </div>
-        <div style={{ display: 'flex', gap: '0.5rem' }}>
+        <div className="logs-header-actions">
           <button className="btn btn-secondary" onClick={handleLogRefresh}>
             Refresh Logs
           </button>
-          <button 
+          <button
             className="btn btn-danger btn-outline"
             onClick={() => {
               setIsAuthorized(false);
