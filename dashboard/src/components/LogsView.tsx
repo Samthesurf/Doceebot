@@ -1,5 +1,6 @@
 /* oxlint-disable react-hooks/exhaustive-deps */
 import React, { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { getLogs } from '../api';
 import type { ConversationLogRow } from '../types';
@@ -11,11 +12,17 @@ import {
   Building2,
   ChevronDown,
   ChevronUp,
+  Search,
 } from 'lucide-react';
 
 export const LogsView: React.FC = () => {
   const { token, demoMode } = useAuth();
-  
+  const [searchParams] = useSearchParams();
+
+  // Target session passed from Search (e.g. /logs?session=...&turn=...)
+  const targetSessionId = searchParams.get('session');
+  const cameFromSearch = Boolean(targetSessionId);
+
   // Auth state for logs password
   const [password, setPassword] = useState('');
   const [isAuthorized, setIsAuthorized] = useState(false);
@@ -25,7 +32,8 @@ export const LogsView: React.FC = () => {
   // Logs state
   const [conversations, setConversations] = useState<ConversationLogRow[]>([]);
   const [selectedSession, setSelectedSession] = useState<ConversationLogRow | null>(null);
-  
+  const [targetMissing, setTargetMissing] = useState(false);
+
   // Details accordion state
   const [openMetadataIndex, setOpenMetadataIndex] = useState<number | null>(null);
 
@@ -47,7 +55,20 @@ export const LogsView: React.FC = () => {
       setIsAuthorized(true);
       sessionStorage.setItem('doceebot_logs_pwd', pwdToTest);
       setPassword(pwdToTest);
-      if (res.conversations.length > 0) {
+
+      if (targetSessionId) {
+        const match = res.conversations.find(
+          (c: ConversationLogRow) => c.conversation_id === targetSessionId
+        );
+        if (match) {
+          setSelectedSession(match);
+          setTargetMissing(false);
+        } else {
+          // Gracefully fall back: keep first conversation selected if any.
+          setSelectedSession(res.conversations[0] ?? null);
+          setTargetMissing(true);
+        }
+      } else if (res.conversations.length > 0) {
         setSelectedSession(res.conversations[0]);
       }
     } catch (err: any) {
@@ -73,6 +94,15 @@ export const LogsView: React.FC = () => {
       if (selectedSession) {
         const updated = res.conversations.find((c: ConversationLogRow) => c.conversation_id === selectedSession.conversation_id);
         if (updated) setSelectedSession(updated);
+      }
+      if (targetSessionId) {
+        const match = res.conversations.find((c: ConversationLogRow) => c.conversation_id === targetSessionId);
+        if (match) {
+          setSelectedSession(match);
+          setTargetMissing(false);
+        } else {
+          setTargetMissing(true);
+        }
       }
     } catch (err) {
       console.error('Failed to refresh logs:', err);
@@ -187,6 +217,32 @@ export const LogsView: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {cameFromSearch && targetMissing && (
+        <div className="glass-card" style={{ borderLeft: '4px solid var(--status-error-text)', background: 'var(--status-error-bg)', marginBottom: '1.5rem', padding: '1rem 1.25rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <Search size={18} style={{ color: 'var(--status-error-text)' }} />
+            <p style={{ color: 'var(--status-error-text)', fontWeight: 700, margin: 0 }}>Session not found</p>
+          </div>
+          <p style={{ color: 'var(--status-error-text)', marginTop: '0.4rem', marginBottom: 0 }}>
+            The conversation from your Search result is no longer available in the logs. Showing other conversations instead.
+          </p>
+        </div>
+      )}
+
+      {cameFromSearch && !targetMissing && (
+        <div className="glass-card" style={{ borderLeft: '4px solid var(--accent-gold)', background: 'var(--accent-gold-bg)', marginBottom: '1.5rem', padding: '1rem 1.25rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <Search size={18} style={{ color: 'var(--accent-gold)' }} />
+            <p style={{ color: 'var(--brown-800)', fontWeight: 700, margin: 0 }}>
+              Opened from Search
+            </p>
+          </div>
+          <p style={{ color: 'var(--brown-700)', marginTop: '0.4rem', marginBottom: 0 }}>
+            Auto-selected the conversation session linked to your search result.
+          </p>
+        </div>
+      )}
 
       <div className="logs-layout">
         {/* Left Side: Sessions List */}

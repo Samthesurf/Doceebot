@@ -1,11 +1,57 @@
-import React, { useEffect, useState } from 'react';
-import { Search, User, AlertTriangle, ListFilter, ClipboardList, MessageSquare, History } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { Search, User, AlertTriangle, ListFilter, ClipboardList, MessageSquare, History, ArrowRight, ExternalLink } from 'lucide-react';
 import { getOrganizations, searchSessions } from '../api';
 import { useAuth } from '../contexts/AuthContext';
 import type { OrganizationDashboardRow, SessionSearchResultRow } from '../types';
 
+const RESULT_TYPE_ORDER = ['work_log', 'turn', 'session'] as const;
+type ResultType = (typeof RESULT_TYPE_ORDER)[number];
+
+const RESULT_TYPE_LABELS: Record<ResultType, string> = {
+  work_log: 'Work Logs',
+  turn: 'Message Turns',
+  session: 'Sessions',
+};
+
+function escapeRegExp(input: string): string {
+  return input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// Splits text into parts, highlighting case-insensitive matches of any query token.
+function highlightMatched(text: string, query: string): React.ReactNode {
+  const tokens = Array.from(
+    new Set(
+      query
+        .trim()
+        .split(/\s+/)
+        .filter((t) => t.length > 0)
+        .map(escapeRegExp)
+    )
+  ).sort((a, b) => b.length - a.length);
+
+  if (tokens.length === 0) {
+    return text;
+  }
+
+  const splitRegex = new RegExp(`(${tokens.join('|')})`, 'gi');
+  const exactMatchRegex = new RegExp(`^(?:${tokens.join('|')})$`, 'i');
+  const parts = text.split(splitRegex);
+
+  return parts.map((part, idx) =>
+    exactMatchRegex.test(part) ? (
+      <mark key={idx} className="search-highlight">
+        {part}
+      </mark>
+    ) : (
+      <React.Fragment key={idx}>{part}</React.Fragment>
+    )
+  );
+}
+
 export const SearchView: React.FC = () => {
   const { token } = useAuth();
+  const navigate = useNavigate();
 
   // Search form inputs
   const [query, setQuery] = useState('');
@@ -104,6 +150,33 @@ export const SearchView: React.FC = () => {
     return new Date(dateStr).toLocaleDateString(undefined, {
       dateStyle: 'medium',
     });
+  };
+
+  // Group results by result_type preserving API order, in the fixed order.
+  const groupedResults = useMemo(() => {
+    const groups: Record<ResultType, SessionSearchResultRow[]> = {
+      work_log: [],
+      turn: [],
+      session: [],
+    };
+    for (const result of results) {
+      if (result.result_type in groups) {
+        groups[result.result_type as ResultType].push(result);
+      }
+    }
+    return RESULT_TYPE_ORDER.map((type) => ({
+      type,
+      items: groups[type],
+    })).filter((group) => group.items.length > 0);
+  }, [results]);
+
+  const handleOpenInLogs = (result: SessionSearchResultRow) => {
+    const params = new URLSearchParams();
+    params.set('session', result.session_id);
+    if (result.result_type === 'turn' && result.source_id) {
+      params.set('turn', result.source_id);
+    }
+    navigate(`/logs?${params.toString()}`);
   };
 
   return (
@@ -239,53 +312,86 @@ export const SearchView: React.FC = () => {
             Search Results ({results.length})
           </h3>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-            {results.map((result, idx) => {
-              const displayScore = Math.round(result.score * 100);
-              return (
-                <div key={`${result.result_type}-${result.source_id}-${idx}`} className="glass-card" style={{ padding: '1.5rem', transition: 'var(--transition-smooth)' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '0.75rem' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', padding: '0.25rem 0.5rem', background: 'var(--bg-cream)', borderRadius: '6px' }}>
-                        {getResultIcon(result.result_type)}
-                        {getResultBadge(result.result_type)}
-                      </div>
-                      <span className="badge badge-info" style={{ textTransform: 'none', fontFamily: 'var(--font-mono)', fontSize: '0.7rem' }}>
-                        Score: {displayScore}%
-                      </span>
-                    </div>
-
-                    <div style={{ fontSize: '0.8rem', color: 'var(--brown-500)' }}>
-                      {result.result_type === 'work_log' && result.work_log_date ? (
-                        <span>Work Date: <strong>{formatWorkDate(result.work_log_date)}</strong></span>
-                      ) : (
-                        <span>Started: <strong>{formatDateTime(result.session_started_at)}</strong></span>
-                      )}
-                    </div>
-                  </div>
-
-                  <h3 style={{ fontSize: '1.15rem', marginBottom: '0.5rem', color: 'var(--brown-900)' }}>
-                    {result.display_title}
-                  </h3>
-
-                  <p style={{ color: 'var(--brown-800)', background: 'white', padding: '0.75rem 1rem', border: '1px solid var(--brown-100)', borderRadius: '6px', fontSize: '0.9rem', marginBottom: '0.75rem', lineHeight: '1.5' }}>
-                    {result.snippet}
-                  </p>
-
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem', fontSize: '0.75rem', color: 'var(--brown-500)' }}>
-                    <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
-                      <span>Session ID: <code style={{ fontFamily: 'var(--font-mono)', color: 'var(--brown-700)' }}>{result.session_id}</code></span>
-                      {result.session_status && (
-                        <span>
-                          Status: <span className={`badge ${result.session_status === 'active' ? 'badge-success' : 'badge-info'}`} style={{ fontSize: '0.65rem', padding: '0.05rem 0.35rem' }}>{result.session_status}</span>
-                        </span>
-                      )}
-                    </div>
-                    <span>Source ID: <code style={{ fontFamily: 'var(--font-mono)' }}>{result.source_id}</code></span>
-                  </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1.75rem' }}>
+            {groupedResults.map((group) => (
+              <div key={group.type}>
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.6rem',
+                    marginBottom: '0.9rem',
+                    paddingBottom: '0.5rem',
+                    borderBottom: '2px solid var(--brown-100)',
+                  }}
+                >
+                  {getResultIcon(group.type)}
+                  <h4 style={{ margin: 0, fontSize: '1rem', color: 'var(--brown-800)' }}>
+                    {RESULT_TYPE_LABELS[group.type]}
+                  </h4>
+                  <span className="badge badge-info" style={{ fontSize: '0.7rem', padding: '0.1rem 0.45rem' }}>
+                    {group.items.length}
+                  </span>
                 </div>
-              );
-            })}
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                  {group.items.map((result, idx) => {
+                    const displayScore = Math.round(result.score * 100);
+                    return (
+                      <div key={`${result.result_type}-${result.source_id}-${idx}`} className="glass-card" style={{ padding: '1.5rem', transition: 'var(--transition-smooth)' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '0.75rem' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', padding: '0.25rem 0.5rem', background: 'var(--bg-cream)', borderRadius: '6px' }}>
+                              {getResultBadge(result.result_type)}
+                            </div>
+                            <span className="badge badge-info" style={{ textTransform: 'none', fontFamily: 'var(--font-mono)', fontSize: '0.7rem' }}>
+                              Score: {displayScore}%
+                            </span>
+                          </div>
+
+                          <div style={{ fontSize: '0.8rem', color: 'var(--brown-500)' }}>
+                            {result.result_type === 'work_log' && result.work_log_date ? (
+                              <span>Work Date: <strong>{formatWorkDate(result.work_log_date)}</strong></span>
+                            ) : (
+                              <span>Started: <strong>{formatDateTime(result.session_started_at)}</strong></span>
+                            )}
+                          </div>
+                        </div>
+
+                        <h3 style={{ fontSize: '1.15rem', marginBottom: '0.5rem', color: 'var(--brown-900)' }}>
+                          {highlightMatched(result.display_title, query)}
+                        </h3>
+
+                        <p style={{ color: 'var(--brown-800)', background: 'white', padding: '0.75rem 1rem', border: '1px solid var(--brown-100)', borderRadius: '6px', fontSize: '0.9rem', marginBottom: '0.75rem', lineHeight: '1.5' }}>
+                          {highlightMatched(result.snippet, query)}
+                        </p>
+
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem', fontSize: '0.75rem', color: 'var(--brown-500)' }}>
+                          <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
+                            <span>Session ID: <code style={{ fontFamily: 'var(--font-mono)', color: 'var(--brown-700)' }}>{result.session_id}</code></span>
+                            {result.session_status && (
+                              <span>
+                                Status: <span className={`badge ${result.session_status === 'active' ? 'badge-success' : 'badge-info'}`} style={{ fontSize: '0.65rem', padding: '0.05rem 0.35rem' }}>{result.session_status}</span>
+                              </span>
+                            )}
+                          </div>
+                          <button
+                            type="button"
+                            className="btn btn-secondary"
+                            style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.8rem', padding: '0.4rem 0.8rem', height: 'auto' }}
+                            onClick={() => handleOpenInLogs(result)}
+                          >
+                            <ExternalLink size={14} />
+                            Open in Logs
+                            <ArrowRight size={14} />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
 
             {results.length === 0 && (
               <div className="glass-card" style={{ padding: '3rem', textAlign: 'center', color: 'var(--brown-500)' }}>
