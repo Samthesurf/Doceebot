@@ -6,18 +6,27 @@ import {
   getOrganizations,
   getDocuments,
   getEscalations,
+  getAdminAccess,
+  getAdminUsers,
+  addAdminUser,
 } from '../api';
 import type {
   OverviewResponse,
   OrganizationDashboardRow,
   DocumentDashboardRow,
   EscalationDashboardRow,
+  AdminAccessResponse,
+  OrgMember,
 } from '../types';
 import {
   Building2,
   RefreshCw,
   Sparkles,
   Eye,
+  Users,
+  UserPlus,
+  CheckCircle2,
+  AlertTriangle,
 } from 'lucide-react';
 
 export const DashboardView: React.FC = () => {
@@ -43,6 +52,108 @@ export const DashboardView: React.FC = () => {
   const [selectedDoc, setSelectedDoc] = useState<DocumentDashboardRow | null>(null);
   const [selectedEsc, setSelectedEsc] = useState<EscalationDashboardRow | null>(null);
 
+  // Admin Management States
+  const [adminAccess, setAdminAccess] = useState<AdminAccessResponse | null>(null);
+  const [adminAccessLoading, setAdminAccessLoading] = useState(false);
+  const [adminAccessError, setAdminAccessError] = useState<string | null>(null);
+  const [selectedOrgId, setSelectedOrgId] = useState<string>('');
+  
+  const [members, setMembers] = useState<OrgMember[]>([]);
+  const [membersLoading, setMembersLoading] = useState(false);
+  const [membersError, setMembersError] = useState<string | null>(null);
+
+  // Form states
+  const [formOrgId, setFormOrgId] = useState<string>('');
+  const [formPlatform, setFormPlatform] = useState<'whatsapp' | 'telegram'>('whatsapp');
+  const [formIdentifier, setFormIdentifier] = useState<string>('');
+  const [formRole, setFormRole] = useState<'worker' | 'supervisor' | 'manager' | 'org_admin'>('worker');
+  const [formDisplayName, setFormDisplayName] = useState<string>('');
+  const [formSubmitting, setFormSubmitting] = useState(false);
+  const [formSuccess, setFormSuccess] = useState<string | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
+
+  const fetchMembers = async (orgId: string) => {
+    setMembersLoading(true);
+    setMembersError(null);
+    try {
+      const res = await getAdminUsers(token, orgId);
+      setMembers(res.members);
+    } catch (err: any) {
+      console.error(err);
+      setMembersError(err.message || 'Failed to load organization members.');
+    } finally {
+      setMembersLoading(false);
+    }
+  };
+
+  const handleRefreshMembers = (orgId: string) => {
+    if (orgId) {
+      fetchMembers(orgId);
+    }
+  };
+
+  const handleFormSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!formOrgId || !formIdentifier.trim()) {
+      setFormError('Organization and platform identifier are required.');
+      return;
+    }
+    
+    setFormSubmitting(true);
+    setFormSuccess(null);
+    setFormError(null);
+    
+    try {
+      const payload = {
+        org_id: formOrgId,
+        platform: formPlatform,
+        identifier: formIdentifier.trim(),
+        role: formRole,
+        display_name: formDisplayName.trim() || undefined,
+      };
+      
+      const res = await addAdminUser(token, payload);
+      
+      let detailMsg = '';
+      if (res.created_user && res.created_membership) {
+        detailMsg = 'A new user was created and added to the organization.';
+      } else if (!res.created_user && res.created_membership) {
+        detailMsg = 'An existing user was added to the organization.';
+      } else if (!res.created_user && !res.created_membership) {
+        if (res.updated_membership_role) {
+          detailMsg = `Membership role was updated to "${res.user.role}".`;
+        } else {
+          detailMsg = 'Membership is already active with the requested role.';
+        }
+      }
+      
+      const nameText = res.user.display_name || payload.identifier;
+      setFormSuccess(`Successfully registered/updated ${nameText}! ${detailMsg}`);
+      setFormIdentifier('');
+      setFormDisplayName('');
+      
+      // Refresh member list if the updated org is the currently selected org
+      if (formOrgId === selectedOrgId) {
+        fetchMembers(formOrgId);
+      }
+      
+      // Refresh general organization stats
+      const orgsRes = await getOrganizations(token);
+      setOrganizations(orgsRes.organizations);
+    } catch (err: any) {
+      console.error(err);
+      if (err.status === 403) {
+        setFormError('Access Forbidden (403): You do not have permission to manage users for this organization.');
+      } else if (err.status === 409) {
+        setFormError('Conflict Detected (409): A conflicting user membership or identifier constraint already exists in this organization.');
+      } else {
+        setFormError(err.message || 'An unexpected error occurred while saving the member.');
+      }
+    } finally {
+      setFormSubmitting(false);
+    }
+  };
+
   const fetchOverviewData = async () => {
     setLoading(true);
     setError(null);
@@ -61,8 +172,25 @@ export const DashboardView: React.FC = () => {
     setTabLoading(true);
     try {
       if (activeTab === 'orgs') {
-        const res = await getOrganizations(token);
-        setOrganizations(res.organizations);
+        setAdminAccessLoading(true);
+        setAdminAccessError(null);
+        
+        const [resOrgs, resAdmin] = await Promise.all([
+          getOrganizations(token),
+          getAdminAccess(token)
+        ]);
+        
+        setOrganizations(resOrgs.organizations);
+        setAdminAccess(resAdmin);
+        
+        // Auto-select the first manageable organization if none is selected
+        if (resAdmin.organizations.length > 0 && !selectedOrgId) {
+          const firstOrgId = resAdmin.organizations[0].id;
+          setSelectedOrgId(firstOrgId);
+          setFormOrgId(firstOrgId);
+          fetchMembers(firstOrgId);
+        }
+        setAdminAccessLoading(false);
       } else if (activeTab === 'docs') {
         const res = await getDocuments(token, docOrgFilter || undefined, docStatusFilter || undefined);
         setDocuments(res.documents);
@@ -72,7 +200,10 @@ export const DashboardView: React.FC = () => {
       }
     } catch (err: any) {
       console.error(err);
-      // We don't block the main UI, just show a warning
+      if (activeTab === 'orgs') {
+        setAdminAccessError(err.message || 'Failed to load manageable organizations.');
+        setAdminAccessLoading(false);
+      }
     } finally {
       setTabLoading(false);
     }
@@ -91,6 +222,9 @@ export const DashboardView: React.FC = () => {
   const handleRefreshAll = () => {
     fetchOverviewData();
     fetchTabData();
+    if (selectedOrgId) {
+      fetchMembers(selectedOrgId);
+    }
   };
 
   const getStatusBadge = (status: string) => {
@@ -109,6 +243,22 @@ export const DashboardView: React.FC = () => {
         return <span className="badge badge-error">{status}</span>;
       default:
         return <span className="badge badge-info">{status}</span>;
+    }
+  };
+
+  const formatRoleLabel = (role: string) => role
+    .split('_')
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+
+  const getRoleBadgeClass = (role: string) => {
+    switch (role) {
+      case 'org_admin':
+        return 'badge-success';
+      case 'supervisor':
+        return 'badge-warning';
+      default:
+        return 'badge-info';
     }
   };
 
@@ -282,52 +432,338 @@ export const DashboardView: React.FC = () => {
         )}
 
         {!tabLoading && activeTab === 'orgs' && (
-          <div className="table-wrapper">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>Organization Name</th>
-                  <th>Workers</th>
-                  <th>Documents</th>
-                  <th>Work Logs</th>
-                  <th>Convs</th>
-                  <th>Active Sessions</th>
-                  <th>Created At</th>
-                </tr>
-              </thead>
-              <tbody>
-                {organizations.map((org) => (
-                  <tr key={org.id}>
-                    <td style={{ fontWeight: 'bold' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                        <Building2 size={16} style={{ color: 'var(--brown-500)' }} />
-                        {org.name}
-                      </div>
-                    </td>
-                    <td>{org.member_count}</td>
-                    <td>{org.document_count}</td>
-                    <td>{org.work_log_count}</td>
-                    <td>{org.conversation_count}</td>
-                    <td>
-                      {org.active_session_count > 0 ? (
-                        <span className="badge badge-success">{org.active_session_count} Active</span>
-                      ) : (
-                        <span className="badge badge-info">None</span>
-                      )}
-                    </td>
-                    <td>{formatDate(org.created_at)}</td>
-                  </tr>
-                ))}
-                {organizations.length === 0 && (
+          <>
+            <div className="table-wrapper" style={{ marginBottom: '2.5rem' }}>
+              <table className="data-table">
+                <thead>
                   <tr>
-                    <td colSpan={7} style={{ textAlign: 'center', color: 'var(--brown-400)', padding: '2rem' }}>
-                      No organizations found.
-                    </td>
+                    <th>Organization Name</th>
+                    <th>Workers</th>
+                    <th>Documents</th>
+                    <th>Work Logs</th>
+                    <th>Convs</th>
+                    <th>Active Sessions</th>
+                    <th>Created At</th>
                   </tr>
+                </thead>
+                <tbody>
+                  {organizations.map((org) => (
+                    <tr key={org.id}>
+                      <td style={{ fontWeight: 'bold' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                          <Building2 size={16} style={{ color: 'var(--brown-500)' }} />
+                          {org.name}
+                        </div>
+                      </td>
+                      <td>{org.member_count}</td>
+                      <td>{org.document_count}</td>
+                      <td>{org.work_log_count}</td>
+                      <td>{org.conversation_count}</td>
+                      <td>
+                        {org.active_session_count > 0 ? (
+                          <span className="badge badge-success">{org.active_session_count} Active</span>
+                        ) : (
+                          <span className="badge badge-info">None</span>
+                        )}
+                      </td>
+                      <td>{formatDate(org.created_at)}</td>
+                    </tr>
+                  ))}
+                  {organizations.length === 0 && (
+                    <tr>
+                      <td colSpan={7} style={{ textAlign: 'center', color: 'var(--brown-400)', padding: '2rem' }}>
+                        No organizations found.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Member & Access Administration Section */}
+            <div style={{ borderTop: '1px solid var(--brown-100)', paddingTop: '2.5rem', marginTop: '1rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
+                <div>
+                  <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
+                    <Users size={22} style={{ color: 'var(--brown-700)' }} />
+                    Member &amp; Access Administration
+                  </h2>
+                  <p>Manage worker memberships, platform identifiers, and authorization roles.</p>
+                </div>
+                {selectedOrgId && (
+                  <button 
+                    className="btn btn-secondary btn-small"
+                    onClick={() => handleRefreshMembers(selectedOrgId)}
+                    disabled={membersLoading}
+                  >
+                    <RefreshCw size={12} className={membersLoading ? 'spin' : ''} />
+                    Refresh Members
+                  </button>
                 )}
-              </tbody>
-            </table>
-          </div>
+              </div>
+
+              {adminAccessLoading ? (
+                <div style={{ display: 'flex', justifyContent: 'center', padding: '2rem' }}>
+                  <div className="spinner" />
+                </div>
+              ) : adminAccessError ? (
+                <div className="badge badge-error" style={{ width: '100%', padding: '1rem', display: 'block', textAlign: 'left', borderRadius: '8px' }}>
+                  <strong>Failed to load manageable organizations:</strong> {adminAccessError}
+                </div>
+              ) : (
+                <div className="dashboard-row">
+                  {/* Left Column: Org Selector & Existing Members List */}
+                  <div className="glass-card" style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+                    <div>
+                      <label className="form-label" htmlFor="admin-org-select">Manage Organization</label>
+                      <select
+                        id="admin-org-select"
+                        className="form-select"
+                        value={selectedOrgId}
+                        onChange={(e) => {
+                          const orgId = e.target.value;
+                          setSelectedOrgId(orgId);
+                          setFormOrgId(orgId);
+                          if (orgId) {
+                            fetchMembers(orgId);
+                          } else {
+                            setMembers([]);
+                          }
+                          setFormSuccess(null);
+                          setFormError(null);
+                        }}
+                      >
+                        <option value="">-- Select an Organization --</option>
+                        {adminAccess?.organizations.map((org) => (
+                          <option key={org.id} value={org.id}>
+                            {org.name} ({formatRoleLabel(org.role)})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {selectedOrgId ? (
+                      <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+                        <h4 style={{ marginBottom: '0.75rem', fontSize: '1rem', color: 'var(--brown-800)' }}>
+                          Existing Members
+                        </h4>
+                        {membersLoading ? (
+                          <div style={{ display: 'flex', justifyContent: 'center', padding: '3rem', flex: 1, alignItems: 'center' }}>
+                            <div className="spinner" />
+                          </div>
+                        ) : membersError ? (
+                          <div className="badge badge-error" style={{ padding: '1rem', borderRadius: '8px' }}>
+                            {membersError}
+                          </div>
+                        ) : (
+                          <div className="table-wrapper" style={{ overflowY: 'auto', maxHeight: '400px' }}>
+                            <table className="data-table" style={{ fontSize: '0.85rem' }}>
+                              <thead>
+                                <tr>
+                                  <th>Name</th>
+                                  <th>Identifier</th>
+                                  <th>Role</th>
+                                  <th>Joined</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {members.map((member) => (
+                                  <tr key={member.user_id}>
+                                    <td style={{ fontWeight: 'bold' }}>{member.display_name || 'Unnamed'}</td>
+                                    <td>
+                                      {member.phone_number ? (
+                                        <div style={{ display: 'flex', flexDirection: 'column' }}>
+                                          <span style={{ fontSize: '0.7rem', color: 'var(--brown-400)', textTransform: 'uppercase', fontWeight: 600 }}>WhatsApp</span>
+                                          <span>{member.phone_number}</span>
+                                        </div>
+                                      ) : member.telegram_user_id ? (
+                                        <div style={{ display: 'flex', flexDirection: 'column' }}>
+                                          <span style={{ fontSize: '0.7rem', color: 'var(--brown-400)', textTransform: 'uppercase', fontWeight: 600 }}>Telegram</span>
+                                          <span>@{member.telegram_user_id}</span>
+                                        </div>
+                                      ) : (
+                                        <span style={{ color: 'var(--brown-300)' }}>No identifier</span>
+                                      )}
+                                    </td>
+                                    <td>
+                                      <span className={`badge ${getRoleBadgeClass(member.role)}`} style={{ fontSize: '0.75rem' }}>
+                                        {formatRoleLabel(member.role)}
+                                      </span>
+                                    </td>
+                                    <td>{formatDate(member.created_at)}</td>
+                                  </tr>
+                                ))}
+                                {members.length === 0 && (
+                                  <tr>
+                                    <td colSpan={4} style={{ textAlign: 'center', color: 'var(--brown-400)', padding: '2rem' }}>
+                                      No members found in this organization.
+                                    </td>
+                                  </tr>
+                                )}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '4rem 2rem', border: '2px dashed var(--brown-200)', borderRadius: '12px', color: 'var(--brown-400)', textAlign: 'center' }}>
+                        <Users size={36} style={{ marginBottom: '1rem', opacity: 0.5, color: 'var(--brown-300)' }} />
+                        <p style={{ color: 'var(--brown-500)' }}>Select an organization above to view its member registry and register new users.</p>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Right Column: Add/Update Member Form */}
+                  <div className="glass-card" style={{ height: 'fit-content' }}>
+                    <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1.25rem', fontSize: '1.15rem' }}>
+                      <UserPlus size={18} style={{ color: 'var(--brown-700)' }} />
+                      Add or Update Member
+                    </h3>
+
+                    {formSuccess && (
+                      <div className="glass-card" style={{ 
+                        borderLeft: '4px solid var(--status-success-text)', 
+                        background: 'var(--status-success-bg)', 
+                        color: 'var(--status-success-text)',
+                        padding: '1rem',
+                        marginBottom: '1.25rem',
+                        fontSize: '0.85rem'
+                      }}>
+                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem' }}>
+                          <CheckCircle2 size={16} style={{ flexShrink: 0, marginTop: '0.1rem' }} />
+                          <div>{formSuccess}</div>
+                        </div>
+                      </div>
+                    )}
+
+                    {formError && (
+                      <div className="glass-card" style={{ 
+                        borderLeft: '4px solid var(--status-error-text)', 
+                        background: 'var(--status-error-bg)', 
+                        color: 'var(--status-error-text)',
+                        padding: '1rem',
+                        marginBottom: '1.25rem',
+                        fontSize: '0.85rem'
+                      }}>
+                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem' }}>
+                          <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: '0.1rem' }} />
+                          <div>{formError}</div>
+                        </div>
+                      </div>
+                    )}
+
+                    <form onSubmit={handleFormSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                      <div>
+                        <label className="form-label" htmlFor="form-org-id">Target Organization <span style={{ color: 'var(--status-error-text)' }}>*</span></label>
+                        <select
+                          id="form-org-id"
+                          className="form-select"
+                          value={formOrgId}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setFormOrgId(val);
+                            setSelectedOrgId(val);
+                            if (val) {
+                              fetchMembers(val);
+                            } else {
+                              setMembers([]);
+                            }
+                          }}
+                          required
+                        >
+                          <option value="">-- Choose Organization --</option>
+                          {adminAccess?.organizations.map((org) => (
+                            <option key={org.id} value={org.id}>
+                              {org.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="form-label" htmlFor="form-platform">Platform Channel <span style={{ color: 'var(--status-error-text)' }}>*</span></label>
+                        <select
+                          id="form-platform"
+                          className="form-select"
+                          value={formPlatform}
+                          onChange={(e) => setFormPlatform(e.target.value as 'whatsapp' | 'telegram')}
+                          required
+                        >
+                          <option value="whatsapp">WhatsApp number</option>
+                          <option value="telegram">Telegram user ID</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="form-label" htmlFor="form-identifier">
+                          {formPlatform === 'whatsapp' ? 'WhatsApp Phone Number' : 'Telegram User ID'} <span style={{ color: 'var(--status-error-text)' }}>*</span>
+                        </label>
+                        <input
+                          id="form-identifier"
+                          type="text"
+                          className="form-input"
+                          placeholder={formPlatform === 'whatsapp' ? 'e.g. +15551234567' : 'e.g. username_or_id'}
+                          value={formIdentifier}
+                          onChange={(e) => setFormIdentifier(e.target.value)}
+                          required
+                        />
+                        <span style={{ fontSize: '0.75rem', color: 'var(--brown-500)', display: 'block', marginTop: '0.25rem' }}>
+                          {formPlatform === 'whatsapp' ? 'Include country code, e.g. +1...' : 'Enter telegram identifier (without @).'}
+                        </span>
+                      </div>
+
+                      <div>
+                        <label className="form-label" htmlFor="form-role">Authorization Role <span style={{ color: 'var(--status-error-text)' }}>*</span></label>
+                        <select
+                          id="form-role"
+                          className="form-select"
+                          value={formRole}
+                          onChange={(e) => setFormRole(e.target.value as any)}
+                          required
+                        >
+                          <option value="worker">Worker</option>
+                          <option value="supervisor">Supervisor</option>
+                          <option value="manager">Manager</option>
+                          <option value="org_admin">Org Admin</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="form-label" htmlFor="form-display-name">Display Name (Optional)</label>
+                        <input
+                          id="form-display-name"
+                          type="text"
+                          className="form-input"
+                          placeholder="e.g. Jane Smith"
+                          value={formDisplayName}
+                          onChange={(e) => setFormDisplayName(e.target.value)}
+                        />
+                      </div>
+
+                      <button
+                        type="submit"
+                        className="btn btn-primary"
+                        style={{ marginTop: '0.5rem', width: '100%', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.5rem' }}
+                        disabled={formSubmitting}
+                      >
+                        {formSubmitting ? (
+                          <>
+                            <div className="spinner" style={{ width: '16px', height: '16px', border: '2px solid white', borderTopColor: 'transparent' }} />
+                            Saving Member...
+                          </>
+                        ) : (
+                          <>
+                            <UserPlus size={16} />
+                            Save Member
+                          </>
+                        )}
+                      </button>
+                    </form>
+                  </div>
+                </div>
+              )}
+            </div>
+          </>
         )}
 
         {!tabLoading && activeTab === 'docs' && (

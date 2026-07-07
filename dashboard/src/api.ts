@@ -8,6 +8,11 @@ import type {
   LogsResponse,
   TokenUsageResponse,
   SessionSearchResponse,
+  AdminAccessResponse,
+  AdminUsersResponse,
+  AddMemberPayload,
+  AddMemberResponse,
+  OrgMember,
 } from './types';
 
 // API base URL configuration
@@ -41,13 +46,16 @@ async function fetchWithAuth<T>(
 
   if (!response.ok) {
     let errorMessage = `API error: ${response.status} ${response.statusText}`;
+    const status = response.status;
     try {
       const errBody = (await response.json()) as { detail?: string };
       errorMessage = errBody.detail || errorMessage;
     } catch {
       // Ignored
     }
-    throw new Error(errorMessage);
+    const err = new Error(errorMessage) as any;
+    err.status = status;
+    throw err;
   }
 
   return response.json() as Promise<T>;
@@ -809,4 +817,210 @@ export const searchSessions = async (
 
   return fetchWithAuth<SessionSearchResponse>(`/search?${params.toString()}`, token);
 };
+
+// Mock admin users data for demo mode
+const mockAdminMembers: Record<string, OrgMember[]> = {
+  '1e9a2b8e-5b12-4d24-a13a-c8dfa4a275f1': [
+    {
+      user_id: 'u111-2222',
+      display_name: 'Marcus Vance',
+      phone_number: '+15550001',
+      telegram_user_id: null,
+      role: 'worker',
+      created_at: '2026-02-16T11:00:00Z',
+    },
+    {
+      user_id: 'u111-3333',
+      display_name: 'Elena Rostova',
+      phone_number: '+15550002',
+      telegram_user_id: 'elena_rostova',
+      role: 'org_admin',
+      created_at: '2026-02-15T08:30:00Z',
+    }
+  ],
+  'bc7f26d3-2a21-477d-b65f-4ea21394b9f2': [
+    {
+      user_id: 'u333-4444',
+      display_name: 'David Cole',
+      phone_number: '+15550003',
+      telegram_user_id: null,
+      role: 'manager',
+      created_at: '2026-03-05T14:00:00Z',
+    },
+    {
+      user_id: 'u333-5555',
+      display_name: 'Sergei K.',
+      phone_number: null,
+      telegram_user_id: 'sergei_k',
+      role: 'supervisor',
+      created_at: '2026-03-01T10:15:00Z',
+    }
+  ],
+  '97f9fa42-df48-43d9-a790-db0e87b7a661': [
+    {
+      user_id: 'u444-5555',
+      display_name: 'Samuel Adebayo',
+      phone_number: '+15550004',
+      telegram_user_id: null,
+      role: 'worker',
+      created_at: '2026-04-10T14:45:00Z',
+    }
+  ],
+  'd9e03d42-ef11-47d0-a083-d5d8fb87a911': [
+    {
+      user_id: 'u555-6666',
+      display_name: 'Timber Supervisor',
+      phone_number: '+15550005',
+      telegram_user_id: 'timber_super',
+      role: 'supervisor',
+      created_at: '2026-05-20T09:00:00Z',
+    }
+  ]
+};
+
+export const getAdminAccess = async (token: string | null): Promise<AdminAccessResponse> => {
+  if (demoMode) {
+    return new Promise((resolve) =>
+      setTimeout(() => {
+        resolve({
+          linked_user_id: 'demo-admin-uid-12345',
+          linked_user_name: 'Elena Rostova',
+          linked_user_email: 'admin@doceebot.com',
+          organizations: MOCK_ORGANIZATIONS.map(org => ({
+            id: org.id,
+            name: org.name,
+            role: 'org_admin',
+            member_count: mockAdminMembers[org.id]?.length || 0,
+          }))
+        });
+      }, 400)
+    );
+  }
+  return fetchWithAuth<AdminAccessResponse>('/admin/access', token);
+};
+
+export const getAdminUsers = async (
+  token: string | null,
+  orgId: string
+): Promise<AdminUsersResponse> => {
+  if (demoMode) {
+    return new Promise((resolve) =>
+      setTimeout(() => {
+        const org = MOCK_ORGANIZATIONS.find(o => o.id === orgId);
+        resolve({
+          org_id: orgId,
+          organization_name: org ? org.name : 'Unknown Organization',
+          members: mockAdminMembers[orgId] || [],
+        });
+      }, 400)
+    );
+  }
+  return fetchWithAuth<AdminUsersResponse>(`/admin/users?org_id=${encodeURIComponent(orgId)}`, token);
+};
+
+export const addAdminUser = async (
+  token: string | null,
+  payload: AddMemberPayload
+): Promise<AddMemberResponse> => {
+  if (demoMode) {
+    return new Promise((resolve, reject) =>
+      setTimeout(() => {
+        // Simulating some validations (e.g. empty identifier conflict)
+        if (!payload.identifier.trim()) {
+          const err = new Error('Identifier cannot be empty') as any;
+          err.status = 400;
+          reject(err);
+          return;
+        }
+
+        const org = MOCK_ORGANIZATIONS.find(o => o.id === payload.org_id);
+        if (!org) {
+          const err = new Error('Organization not found') as any;
+          err.status = 404;
+          reject(err);
+          return;
+        }
+
+        // Simulating a 409 conflict scenario or 403 authorization scenario if specific test conditions are met.
+        // Let's allow users to specify "conflict" or similar in name/identifier if they want to test errors:
+        if (payload.identifier.includes('conflict')) {
+          const err = new Error('A conflict occurred: User/membership already exists with a different conflict state.') as any;
+          err.status = 409;
+          reject(err);
+          return;
+        }
+        if (payload.identifier.includes('forbidden')) {
+          const err = new Error('Forbidden: You do not have permission to modify this organization.') as any;
+          err.status = 403;
+          reject(err);
+          return;
+        }
+
+        const members = mockAdminMembers[payload.org_id] || [];
+        const isWhatsapp = payload.platform === 'whatsapp';
+        
+        // Find if a member with this identifier/platform already exists
+        const existingMemberIndex = members.findIndex(m => {
+          if (isWhatsapp) {
+            return m.phone_number === payload.identifier;
+          } else {
+            return m.telegram_user_id === payload.identifier;
+          }
+        });
+
+        if (existingMemberIndex !== -1) {
+          const existingMember = members[existingMemberIndex];
+          const roleChanged = existingMember.role !== payload.role;
+          
+          // Update details
+          existingMember.role = payload.role;
+          if (payload.display_name) {
+            existingMember.display_name = payload.display_name;
+          }
+          
+          resolve({
+            org_id: payload.org_id,
+            organization_name: org.name,
+            user: existingMember,
+            created_user: false,
+            created_membership: false,
+            updated_membership_role: roleChanged,
+          });
+        } else {
+          const newUserId = 'u-mock-' + Math.random().toString(36).substr(2, 9);
+          const newMember: OrgMember = {
+            user_id: newUserId,
+            display_name: payload.display_name || payload.identifier,
+            phone_number: isWhatsapp ? payload.identifier : null,
+            telegram_user_id: isWhatsapp ? null : payload.identifier,
+            role: payload.role,
+            created_at: new Date().toISOString(),
+          };
+
+          mockAdminMembers[payload.org_id] = [...members, newMember];
+          // Update the MOCK_ORGANIZATIONS count
+          org.member_count += 1;
+
+          resolve({
+            org_id: payload.org_id,
+            organization_name: org.name,
+            user: newMember,
+            created_user: true,
+            created_membership: true,
+            updated_membership_role: false,
+          });
+        }
+      }, 500)
+    );
+  }
+
+  return fetchWithAuth<AddMemberResponse>('/admin/users', token, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+};
+
 

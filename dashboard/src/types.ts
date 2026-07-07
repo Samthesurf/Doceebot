@@ -222,3 +222,47 @@ export interface SessionSearchResponse {
   results: SessionSearchResultRow[];
 }
 
+export interface AdminAccessResponse {
+  linked_user_id: string;
+  linked_user_name: string;
+  linked_user_email: string;
+  organizations: Array<{
+    id: string;
+    name: string;
+    role: string;
+    member_count: number;
+  }>;
+}
+
+export interface OrgMember {
+  user_id: string;
+  display_name: string | null;
+  phone_number: string | null;
+  telegram_user_id: string | null;
+  role: 'worker' | 'supervisor' | 'manager' | 'org_admin';
+  created_at: string;
+}
+
+export interface AdminUsersResponse {
+  org_id: string;
+  organization_name: string;
+  members: OrgMember[];
+}
+
+export interface AddMemberPayload {
+  org_id: string;
+  platform: 'whatsapp' | 'telegram';
+  identifier: string;
+  role: 'worker' | 'supervisor' | 'manager' | 'org_admin';
+  display_name?: string;
+}
+
+export interface AddMemberResponse {
+  org_id: string;
+  organization_name: string;
+  user: OrgMember;
+  created_user: boolean;
+  created_membership: boolean;
+  updated_membership_role: boolean;
+}
+

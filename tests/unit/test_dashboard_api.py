@@ -51,11 +51,13 @@ def _client_with_dashboard_data(tmp_path):
             User(
                 id=user_id,
                 display_name="Ada Admin",
-                phone_number="+15550001",
+                email="admin@example.com",
+                phone_number="+155****0001",
                 created_at=now,
             )
         )
         session.add(Membership(org_id=org_id, user_id=user_id, role="admin"))
+
         session.add(
             ConversationSession(
                 id=conversation_id,
@@ -231,3 +233,52 @@ def test_dashboard_search_returns_hybrid_session_matches(tmp_path):
     assert payload["results"]
     assert {item["result_type"] for item in payload["results"]} >= {"work_log", "turn"}
     assert any(item["display_title"] == "Packaging line maintenance" for item in payload["results"])
+
+
+def test_dashboard_admin_access_returns_linked_org_memberships(tmp_path):
+    client, org_id = _client_with_dashboard_data(tmp_path)
+
+    response = client.get("/dashboard-api/admin/access")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["linked_user_email"] == "admin@example.com"
+    assert payload["organizations"] == [
+        {
+            "id": str(org_id),
+            "name": "Milk Brown Farms",
+            "role": "org_admin",
+            "member_count": 1,
+        }
+    ]
+
+
+def test_dashboard_admin_can_create_and_list_telegram_org_user(tmp_path):
+    client, org_id = _client_with_dashboard_data(tmp_path)
+
+    create_response = client.post(
+        "/dashboard-api/admin/users",
+        json={
+            "org_id": str(org_id),
+            "platform": "telegram",
+            "identifier": "7994559684",
+            "role": "worker",
+            "display_name": "Telegram Tester",
+        },
+    )
+
+    assert create_response.status_code == 201
+    created = create_response.json()
+    assert created["organization_name"] == "Milk Brown Farms"
+    assert created["created_user"] is True
+    assert created["created_membership"] is True
+    assert created["updated_membership_role"] is False
+    assert created["user"]["telegram_user_id"] == "7994559684"
+    assert created["user"]["role"] == "worker"
+
+    list_response = client.get("/dashboard-api/admin/users", params={"org_id": str(org_id)})
+
+    assert list_response.status_code == 200
+    members = list_response.json()["members"]
+    assert any(member["telegram_user_id"] == "7994559684" for member in members)
+    assert any(member["display_name"] == "Telegram Tester" for member in members)
