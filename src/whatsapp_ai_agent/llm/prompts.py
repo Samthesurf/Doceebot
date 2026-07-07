@@ -93,6 +93,10 @@ Rules:
 - If conversation_context.recent_turns contains a command_hint for edit/update/fix,
   apply the correction to the referenced draft index and return the full updated
   draft list.
+- If conversation_context.recent_turns contains retrieved_context, treat it as
+  historical evidence from earlier sessions. Use it to resolve references like
+  "that one from yesterday" or "the job I mentioned last week", but do not let it
+  override explicit facts from the current message.
 - If the command_hint is split, split the referenced draft into the requested
   multiple entries and preserve shared facts unless the user says otherwise.
 - If the current text asks to merge, delete, confirm, undo, cancel, export, forget,

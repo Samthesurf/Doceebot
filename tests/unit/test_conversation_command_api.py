@@ -1,5 +1,5 @@
 import json
-from datetime import UTC, datetime, time
+from datetime import UTC, date, datetime, time
 from typing import Literal
 from uuid import uuid4
 
@@ -594,3 +594,95 @@ async def test_26_process_inbound_requires_resolved_org_and_user():
             normalizer=QueueNormalizer([]),
             store_reports=False,
         )
+
+
+def test_27_command_parser_parses_search_query():
+    command = parse_conversation_command(make_event("search cable tray"))
+
+    assert command is not None
+    assert command.name == "search"
+    assert command.raw_text == "search cable tray"
+    assert command.text == "cable tray"
+    assert command.should_short_circuit is True
+
+
+@pytest.mark.asyncio
+async def test_28_search_command_returns_past_matches_without_llm(db_session):
+    org_id, user_id, _, _ = await seed_session(db_session, log("Cable tray installation"))
+    normalizer = QueueNormalizer([])
+
+    reply = await process_inbound_event(
+        make_event("search cable tray"),
+        org_id=org_id,
+        user_id=user_id,
+        db_session=db_session,
+        normalizer=normalizer,
+        store_reports=False,
+    )
+
+    assert "Found" in reply.reply_text
+    assert "Cable tray installation" in reply.reply_text
+    assert "Session ID:" in reply.reply_text
+    assert normalizer.contexts == []
+
+
+@pytest.mark.asyncio
+async def test_29_cross_session_matches_are_injected_into_llm_context(db_session):
+    org_id, user_id, _, _ = await seed_session(db_session, log("Transformer oil leak"))
+    normalizer = QueueNormalizer([result(log("Follow-up visit"))])
+
+    await process_inbound_event(
+        make_event("Need the transformer oil leak details from yesterday"),
+        org_id=org_id,
+        user_id=user_id,
+        db_session=db_session,
+        normalizer=normalizer,
+        store_reports=False,
+    )
+
+    context = normalizer.contexts[-1]
+    retrieved_turns = [
+        turn for turn in context.recent_turns if turn.get("message_type") == "retrieved_context"
+    ]
+    assert retrieved_turns
+    assert "Transformer oil leak" in retrieved_turns[0]["body_text"]
+
+
+@pytest.mark.asyncio
+async def test_30_report_request_can_retrieve_confirmed_historical_logs(db_session, tmp_path):
+    org_id, user_id, _, _ = await seed_session(db_session, log("Packaging line maintenance"))
+    entry = db_session.scalar(select(WorkLogEntry))
+    entry.confirmation_status = "confirmed"
+    db_session.commit()
+
+    normalizer = QueueNormalizer(
+        [
+            ChatParseResult(
+                intent="report_request",
+                report_request=ReportRequest(
+                    report_type="daily",
+                    title="Yesterday report",
+                    start_date=date(2026, 7, 6),
+                    end_date=date(2026, 7, 6),
+                    output_format="docx",
+                ),
+                summary_for_user="report requested",
+                confidence=0.95,
+            )
+        ]
+    )
+
+    reply = await process_inbound_event(
+        make_event("make report for yesterday"),
+        org_id=org_id,
+        user_id=user_id,
+        db_session=db_session,
+        normalizer=normalizer,
+        report_output_dir=tmp_path,
+        store_reports=False,
+        use_llm_for_reports=False,
+    )
+
+    assert reply.generated_reports
+    assert reply.generated_reports[0].path.exists()
+    assert "Generated report file(s):" in reply.reply_text

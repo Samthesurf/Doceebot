@@ -214,3 +214,20 @@ def test_dashboard_logs_require_second_password_and_hide_raw_payloads(tmp_path):
     assert conversation["turns"][0]["body_text"] == "worked on packaging line"
     assert conversation["turns"][0]["metadata"] == {"command": "status"}
     assert "raw_payload_json" not in conversation["turns"][0]
+
+
+def test_dashboard_search_returns_hybrid_session_matches(tmp_path):
+    client, org_id = _client_with_dashboard_data(tmp_path)
+
+    response = client.get(
+        "/dashboard-api/search",
+        params={"q": "packaging", "org_id": str(org_id), "limit": 5},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["query"] == "packaging"
+    assert payload["org_id"] == str(org_id)
+    assert payload["results"]
+    assert {item["result_type"] for item in payload["results"]} >= {"work_log", "turn"}
+    assert any(item["display_title"] == "Packaging line maintenance" for item in payload["results"])

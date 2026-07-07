@@ -37,6 +37,7 @@ from whatsapp_ai_agent.memory.conversations import (
     ConversationRepository,
     starts_new_conversation,
 )
+from whatsapp_ai_agent.memory.session_search import SessionSearcher
 from whatsapp_ai_agent.memory.work_logs import (
     WorkLogRepository,
     build_confirmation_message,
@@ -176,8 +177,7 @@ async def extract_stored_media(
                     content_type=content_type,
                     media_kind=media_kind,  # type: ignore[arg-type]
                     reason=(
-                        "Skipped Gemini media extraction because this MIME type is not "
-                        "supported."
+                        "Skipped Gemini media extraction because this MIME type is not supported."
                     ),
                 )
             )
@@ -389,9 +389,8 @@ async def process_inbound_event(
                         drafts=snapshot,
                         raw_message=raw_message,
                     )
-                    reply = (
-                        "Restored the previous draft board.\n\n"
-                        + build_draft_board_message(snapshot, conversation_id=conversation.id)
+                    reply = "Restored the previous draft board.\n\n" + build_draft_board_message(
+                        snapshot, conversation_id=conversation.id
                     )
             elif command.name == "cancel":
                 cancelled_count = work_log_repo.cancel_conversation_drafts(conversation.id)
@@ -431,13 +430,15 @@ async def process_inbound_event(
                     report_text=report_text,
                     snapshot=snapshot,
                 )
-                delivery_status, destination, error_text = (
-                    await _send_developer_escalation_if_configured(
-                        settings=settings or get_settings(),
-                        escalation_id=escalation.id,
-                        report_text=report_text,
-                        snapshot=snapshot,
-                    )
+                (
+                    delivery_status,
+                    destination,
+                    error_text,
+                ) = await _send_developer_escalation_if_configured(
+                    settings=settings or get_settings(),
+                    escalation_id=escalation.id,
+                    report_text=report_text,
+                    snapshot=snapshot,
                 )
                 conversation_repo.update_developer_escalation_delivery(
                     escalation,
@@ -445,9 +446,7 @@ async def process_inbound_event(
                     destination=destination,
                     error_text=error_text,
                 )
-                reply = (
-                    f"Reported this conversation to the developer. Report ID: {escalation.id}."
-                )
+                reply = f"Reported this conversation to the developer. Report ID: {escalation.id}."
                 if delivery_status == "pending":
                     reply += " It is saved in the developer escalation queue."
                 elif delivery_status == "failed":
@@ -460,6 +459,35 @@ async def process_inbound_event(
                     )
                 else:
                     reply = "Thanks, I marked that feedback as positive."
+            elif command.name == "search":
+                search_query = command.text or command.raw_text
+                searcher = SessionSearcher(db_session)
+                results = searcher.search(
+                    query=search_query,
+                    org_id=resolved_org_id,
+                    user_id=resolved_user_id,
+                )
+                if not results:
+                    reply = "No past sessions found matching that query."
+                else:
+                    lines = [
+                        f"Found {len(results)} past session(s) matching '{search_query}':",
+                        "",
+                    ]
+                    for i, result in enumerate(results[:5], 1):
+                        lines.append(
+                            f"{i}. [{result.result_type}] "
+                            f"{result.display_date}: {result.display_title}"
+                        )
+                        if result.snippet:
+                            lines.append(f"   {result.snippet[:140]}")
+                        if result.session_started_at:
+                            lines.append(
+                                f"   Session start: {result.session_started_at.isoformat()}"
+                            )
+                        lines.append(f"   Session ID: {result.session_id}")
+                        lines.append("")
+                    reply = "\n".join(lines)
             else:
                 reply = build_help_message()
 
@@ -487,6 +515,43 @@ async def process_inbound_event(
                     "metadata": _command_metadata(command),
                 }
             )
+
+        # Cross-session retrieval: light search over past sessions for LLM context
+        try:
+            searcher = SessionSearcher(db_session)
+            search_cross_results = searcher.search(
+                query=scoped_event.text or "",
+                org_id=resolved_org_id,
+                user_id=resolved_user_id,
+                limit=3,
+            )
+            if search_cross_results:
+                context_lines = [
+                    (
+                        "Retrieved facts from earlier sessions. "
+                        "Use these only as historical context, not as a replacement "
+                        "for current-message facts."
+                    ),
+                    "",
+                ]
+                for result in search_cross_results:
+                    snippet = result.snippet[:150] if result.snippet else ""
+                    context_lines.append(
+                        f"- [{result.result_type}] session {result.session_id}"
+                        f" ({result.display_date}, status={result.session_status or 'unknown'}): "
+                        f"{result.display_title}. {snippet}"
+                    )
+                recent_turns.append(
+                    {
+                        "direction": "system",
+                        "message_type": "retrieved_context",
+                        "body_text": "\n".join(context_lines),
+                        "metadata": {"search_result_count": len(search_cross_results)},
+                    }
+                )
+        except Exception:
+            logger.warning("Cross-session search failed", exc_info=True)
+
         if previous_logs or recent_turns:
             conversation_context = ConversationContext(
                 session_id=str(conversation.id),
@@ -662,6 +727,25 @@ async def process_inbound_event(
     generated_reports: list[GeneratedReportFile] = []
     if parse_result.intent == "report_request" and report_output_dir is not None:
         logs_for_report = existing_work_logs or parse_result.work_logs
+        if (
+            not logs_for_report
+            and db_session is not None
+            and parse_result.report_request is not None
+        ):
+            report_request = parse_result.report_request
+            retrieval_query = None
+            if report_request.start_date is None and report_request.end_date is None:
+                retrieval_query = scoped_event.text
+            retrieved_entries = SessionSearcher(db_session).search_work_log_entries(
+                query=retrieval_query,
+                org_id=resolved_org_id,
+                user_id=resolved_user_id,
+                limit=50,
+                confirmed_only=True,
+                start_date=report_request.start_date,
+                end_date=report_request.end_date,
+            )
+            logs_for_report = [work_log_from_db(entry) for entry in retrieved_entries]
         generated_reports = await generate_report_files(
             org_id=str(resolved_org_id),
             work_logs=logs_for_report,

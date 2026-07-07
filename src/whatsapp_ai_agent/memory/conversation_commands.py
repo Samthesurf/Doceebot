@@ -32,6 +32,10 @@ _FORGET_RE = re.compile(
     r"^(?:forget|delete)\s+(?:this\s+)?(?:conversation|session|chat)$",
     re.IGNORECASE,
 )
+_SEARCH_RE = re.compile(
+    r"^search\s+(.+)$",
+    re.IGNORECASE | re.DOTALL,
+)
 
 _HELP_COMMANDS = {"help", "menu", "commands", "?"}
 _STATUS_COMMANDS = {
@@ -116,6 +120,15 @@ def parse_conversation_command(event: InboundEvent) -> ConversationCommand | Non
         return ConversationCommand(name="export", raw_text=raw)
     if _FORGET_RE.match(raw):
         return ConversationCommand(name="forget", raw_text=raw)
+
+    search_match = _SEARCH_RE.match(raw)
+    if search_match:
+        return ConversationCommand(
+            name="search",
+            raw_text=raw,
+            text=search_match.group(1).strip(),
+            should_short_circuit=True,
+        )
 
     report_match = _REPORT_RE.match(raw)
     report_command = (

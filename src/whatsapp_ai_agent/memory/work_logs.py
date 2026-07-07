@@ -394,8 +394,8 @@ def build_draft_board_message(
         lines.append(f"   Status: {log.status}; confirmation: {log.confirmation_status}")
     lines.append("")
     lines.append("Commands: confirm 1, confirm all, edit 1: ..., delete 1, merge 1 and 2,")
-    lines.append("split 1: ..., undo, cancel, export, forget this session, new, help,")
-    lines.append("report this ...")
+    lines.append("split 1: ..., undo, cancel, export, forget this session, search <query>,")
+    lines.append("new, help, report this ...")
     return "\n".join(lines)
 
 
@@ -416,6 +416,7 @@ def build_help_message() -> str:
             "- new: start a fresh work-log conversation",
             "- export: show the current conversation id for audit export",
             "- forget this session: delete this conversation's stored data",
+            "- search <query>: find matching past sessions, work logs, and messages",
             "- report this <problem>: send this conversation and your note to the dev",
             "",
             "You can also just send text, photos, documents, or voice notes naturally.",

@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from whatsapp_ai_agent.config import Settings, get_settings
 from whatsapp_ai_agent.db.session import get_db_session
+from whatsapp_ai_agent.memory.session_search import SessionSearcher
 
 router = APIRouter(prefix="/dashboard-api", tags=["dashboard"])
 _GOOGLE_REQUEST = google_requests.Request()
@@ -121,6 +122,28 @@ class ConversationLogRow(BaseModel):
 
 class LogsResponse(BaseModel):
     conversations: list[ConversationLogRow]
+
+
+class SessionSearchResultRow(BaseModel):
+    source_id: str
+    session_id: str
+    score: float
+    snippet: str
+    result_type: str
+    work_log_title: str | None = None
+    work_log_date: str | None = None
+    turn_body_preview: str | None = None
+    session_started_at: datetime | None = None
+    session_status: str | None = None
+    display_title: str
+    display_date: str
+
+
+class SessionSearchResponse(BaseModel):
+    query: str
+    org_id: UUID
+    user_id: UUID | None = None
+    results: list[SessionSearchResultRow]
 
 
 class TokenUsageTotals(BaseModel):
@@ -504,6 +527,47 @@ async def list_dashboard_documents(
         item["tags"] = _json_loads(item.pop("tags_json", None), [])
         documents.append(DocumentDashboardRow(**item))
     return DocumentsDashboardResponse(documents=documents)
+
+
+@router.get("/search", response_model=SessionSearchResponse)
+async def search_dashboard_sessions(
+    q: Annotated[str, Query(min_length=1, max_length=300)],
+    org_id: UUID,
+    user_id: UUID | None = None,
+    limit: Annotated[int, Query(ge=1, le=50)] = 10,
+    user: DashboardUser = Depends(require_dashboard_user),
+    db_session: Session = Depends(get_db_session),
+) -> SessionSearchResponse:
+    _ = user
+    searcher = SessionSearcher(db_session)
+    results = searcher.search(
+        query=q,
+        org_id=org_id,
+        user_id=user_id,
+        limit=limit,
+    )
+    return SessionSearchResponse(
+        query=q,
+        org_id=org_id,
+        user_id=user_id,
+        results=[
+            SessionSearchResultRow(
+                source_id=result.source_id,
+                session_id=result.session_id,
+                score=result.score,
+                snippet=result.snippet,
+                result_type=result.result_type,
+                work_log_title=result.work_log_title,
+                work_log_date=result.work_log_date,
+                turn_body_preview=result.turn_body_preview,
+                session_started_at=result.session_started_at,
+                session_status=result.session_status,
+                display_title=result.display_title,
+                display_date=result.display_date,
+            )
+            for result in results
+        ],
+    )
 
 
 @router.get("/escalations", response_model=EscalationsResponse)
