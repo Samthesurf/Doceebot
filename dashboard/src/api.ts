@@ -7,6 +7,7 @@ import type {
   EscalationsResponse,
   LogsResponse,
   TokenUsageResponse,
+  SessionSearchResponse,
 } from './types';
 
 // API base URL configuration
@@ -660,3 +661,152 @@ export const getTokenUsage = async (
   const params = new URLSearchParams({ window_days: String(windowDays) });
   return fetchWithAuth<TokenUsageResponse>(`/token-usage?${params.toString()}`, token);
 };
+
+const MOCK_SEARCH_RESULTS = [
+  {
+    org_id: '1e9a2b8e-5b12-4d24-a13a-c8dfa4a275f1',
+    user_id: 'u111-2222',
+    source_id: 'w-mock-1',
+    session_id: 'c1c1c1c1-1111-4c4c-8c8c-111111111111',
+    score: 0.92,
+    snippet: 'Completed plowing Plot C-2 using tractor T-14. Engine hours logged: 4.2. Supervisor signed off on completion.',
+    result_type: 'work_log',
+    work_log_title: 'Plot C-2 Tractor Plowing',
+    work_log_date: '2026-07-06',
+    turn_body_preview: null,
+    session_started_at: '2026-07-06T18:00:00Z',
+    session_status: 'active',
+    display_title: 'Plot C-2 Tractor Plowing',
+    display_date: '2026-07-06',
+  },
+  {
+    org_id: '1e9a2b8e-5b12-4d24-a13a-c8dfa4a275f1',
+    user_id: 'u111-2222',
+    source_id: 't-mock-1',
+    session_id: 'c1c1c1c1-1111-4c4c-8c8c-111111111111',
+    score: 0.81,
+    snippet: 'Hi bot, I am starting my shift today at 6 PM. Driving tractor T-14 in Plot C-2.',
+    result_type: 'turn',
+    work_log_title: null,
+    work_log_date: null,
+    turn_body_preview: 'Hi bot, I am starting my shift today at 6 PM. Driving tractor T-14 in Plot C-2.',
+    session_started_at: '2026-07-06T18:00:00Z',
+    session_status: 'active',
+    display_title: 'Hi bot, I am starting my shift today at 6 PM. Driving tractor T-14...',
+    display_date: '2026-07-06T18:00:00Z',
+  },
+  {
+    org_id: '97f9fa42-df48-43d9-a790-db0e87b7a661',
+    user_id: 'u444-5555',
+    source_id: 'w-mock-2',
+    session_id: 'c3c3c3c3-3333-4c4c-8c8c-333333333333',
+    score: 0.76,
+    snippet: 'Harvested 45 crates of tomatoes at Plot B-4 with a team of 5 workers. Tractor engine turned off and locked.',
+    result_type: 'work_log',
+    work_log_title: 'Harvesting Tomatoes - Plot B-4',
+    work_log_date: '2026-07-05',
+    turn_body_preview: null,
+    session_started_at: '2026-07-05T08:00:00Z',
+    session_status: 'closed',
+    display_title: 'Harvesting Tomatoes - Plot B-4',
+    display_date: '2026-07-05',
+  },
+  {
+    org_id: '1e9a2b8e-5b12-4d24-a13a-c8dfa4a275f1',
+    user_id: 'u111-2222',
+    source_id: 'c1c1c1c1-1111-4c4c-8c8c-111111111111',
+    session_id: 'c1c1c1c1-1111-4c4c-8c8c-111111111111',
+    score: 0.65,
+    snippet: 'Active conversation session for Marcus Vance. 5 turns logged. Includes pending Yoruba language voice note escalation.',
+    result_type: 'session',
+    work_log_title: null,
+    work_log_date: null,
+    turn_body_preview: null,
+    session_started_at: '2026-07-06T18:00:00Z',
+    session_status: 'active',
+    display_title: 'Marcus Vance - Tractor Operations',
+    display_date: '2026-07-06T18:00:00Z',
+  },
+  {
+    org_id: 'bc7f26d3-2a21-477d-b65f-4ea21394b9f2',
+    user_id: 'u333-5555',
+    source_id: 'w-mock-3',
+    session_id: 'c2c2c2c2-2222-4c4c-8c8c-222222222222',
+    score: 0.88,
+    snippet: 'Intake of diesel fuel for truck fleet. Image OCR processed, parsed 50 liters. System validation flagged string format error.',
+    result_type: 'work_log',
+    work_log_title: 'Diesel Fuel Intake Receipt OCR',
+    work_log_date: '2026-07-06',
+    turn_body_preview: null,
+    session_started_at: '2026-07-06T15:20:00Z',
+    session_status: 'active',
+    display_title: 'Diesel Fuel Intake Receipt OCR',
+    display_date: '2026-07-06',
+  },
+  {
+    org_id: 'bc7f26d3-2a21-477d-b65f-4ea21394b9f2',
+    user_id: 'u333-5555',
+    source_id: 't-mock-2',
+    session_id: 'c2c2c2c2-2222-4c4c-8c8c-222222222222',
+    score: 0.72,
+    snippet: 'Truck intake completed for vehicle LL-902. Weight: 14.2 tons. OCR extracted from scale receipt.',
+    result_type: 'turn',
+    work_log_title: null,
+    work_log_date: null,
+    turn_body_preview: 'Truck intake completed for vehicle LL-902. Weight: 14.2 tons. OCR extracted from scale receipt.',
+    session_started_at: '2026-07-06T15:20:00Z',
+    session_status: 'active',
+    display_title: 'Truck intake completed for vehicle LL-902. Weight: 14.2 tons...',
+    display_date: '2026-07-06T15:20:00Z',
+  }
+];
+
+export const searchSessions = async (
+  token: string | null,
+  q: string,
+  orgId: string,
+  userId?: string,
+  limit = 10
+): Promise<SessionSearchResponse> => {
+  if (demoMode) {
+    return new Promise((resolve) => {
+      setTimeout(() => {
+        let filtered = MOCK_SEARCH_RESULTS.filter((item) => item.org_id === orgId);
+
+        if (userId) {
+          filtered = filtered.filter((item) => item.user_id === userId);
+        }
+
+        const queryLower = q.toLowerCase().trim();
+        if (queryLower) {
+          filtered = filtered.filter(
+            (item) =>
+              item.snippet.toLowerCase().includes(queryLower) ||
+              item.display_title.toLowerCase().includes(queryLower) ||
+              (item.work_log_title && item.work_log_title.toLowerCase().includes(queryLower)) ||
+              (item.turn_body_preview && item.turn_body_preview.toLowerCase().includes(queryLower))
+          );
+        }
+
+        resolve({
+          query: q,
+          org_id: orgId,
+          user_id: userId || null,
+          results: filtered.slice(0, limit),
+        });
+      }, 500);
+    });
+  }
+
+  const params = new URLSearchParams({
+    q,
+    org_id: orgId,
+  });
+  if (userId) {
+    params.append('user_id', userId);
+  }
+  params.append('limit', String(limit));
+
+  return fetchWithAuth<SessionSearchResponse>(`/search?${params.toString()}`, token);
+};
+

@@ -199,3 +199,26 @@ export interface TokenUsageResponse {
   daily: TokenUsageDailyRow[];
   recent: TokenUsageRecentRow[];
 }
+
+export interface SessionSearchResultRow {
+  source_id: string;
+  session_id: string;
+  score: number;
+  snippet: string;
+  result_type: string;
+  work_log_title: string | null;
+  work_log_date: string | null;
+  turn_body_preview: string | null;
+  session_started_at: string | null;
+  session_status: string | null;
+  display_title: string;
+  display_date: string;
+}
+
+export interface SessionSearchResponse {
+  query: string;
+  org_id: string;
+  user_id: string | null;
+  results: SessionSearchResultRow[];
+}
+

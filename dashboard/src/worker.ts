@@ -6,6 +6,8 @@ const INDEX_PATHS = new Set([
   '/logs/',
   '/token-usage',
   '/token-usage/',
+  '/search',
+  '/search/',
 ]);
 
 function asAssetRequest(request: Request, pathname: string): Request {
