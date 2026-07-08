@@ -97,6 +97,96 @@ async def send_twilio_text_reply(
     await asyncio.to_thread(client.messages.create, **create_kwargs)
 
 
+async def send_twilio_typing_indicator(event: InboundEvent, *, settings: Settings) -> None:
+    """Show the native WhatsApp 'typing…' indicator on Twilio.
+
+    Twilio anchors the indicator to the inbound message SID (SM*/MM*), so the
+    event's platform_message_id must be a valid Twilio message SID. The indicator
+    expires after a short window, so callers should refresh it (see
+    ``twilio_typing``). Raises on failure so callers can fall back to a text
+    message.
+    """
+
+    if not event.platform_message_id or not event.platform_message_id.startswith(("SM", "MM")):
+        raise ValueError("event.platform_message_id is not a valid Twilio message SID")
+
+    client = build_twilio_client(settings)
+    await asyncio.to_thread(
+        client.messaging.v2.typing_indicator.create,
+        channel="whatsapp",
+        message_id=event.platform_message_id,
+    )
+
+
+class _TwilioTypingIndicator:
+    """Keep the WhatsApp 'typing…' indicator alive for the duration of a block.
+
+    Twilio's typing indicator expires after a short period (well under the 10 to
+    15 second AI turn), so this refreshes it on an interval. If the very first
+    send fails (for example a non-Twilio SID), the context manager falls back to
+    a one-time 'thinking' text message instead of raising.
+    """
+
+    _REFRESH_INTERVAL_SECONDS = 20
+
+    def __init__(self, event: InboundEvent, *, settings: Settings) -> None:
+        self._event = event
+        self._settings = settings
+        self._task: asyncio.Task[None] | None = None
+        self._fallback_sent = False
+
+    async def __aenter__(self) -> "_TwilioTypingIndicator":
+        try:
+            await send_twilio_typing_indicator(self._event, settings=self._settings)
+        except Exception:
+            logger.warning("Twilio typing indicator failed; using text fallback", exc_info=True)
+            await self._send_text_fallback()
+            return self
+        self._task = asyncio.create_task(self._refresh_loop())
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: object,
+        exc: object,
+        tb: object,
+    ) -> None:
+        if self._task is not None:
+            self._task.cancel()
+            try:
+                await self._task
+            except (asyncio.CancelledError, Exception):
+                pass
+
+    async def _refresh_loop(self) -> None:
+        try:
+            while True:
+                await asyncio.sleep(self._REFRESH_INTERVAL_SECONDS)
+                await send_twilio_typing_indicator(self._event, settings=self._settings)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("Twilio typing refresh failed; using text fallback", exc_info=True)
+            if not self._fallback_sent:
+                await self._send_text_fallback()
+
+    async def _send_text_fallback(self) -> None:
+        if self._fallback_sent or self._event.media:
+            return
+        self._fallback_sent = True
+        try:
+            await send_twilio_text_reply(
+                self._event, _INTERIM_THINKING_MESSAGE, settings=self._settings
+            )
+        except Exception:
+            logger.warning("Twilio text fallback failed", exc_info=True)
+
+
+def twilio_typing(event: InboundEvent, *, settings: Settings) -> _TwilioTypingIndicator:
+    """Return a context manager that keeps the WhatsApp typing indicator on."""
+    return _TwilioTypingIndicator(event, settings=settings)
+
+
 async def process_deferred_twilio_event(event: InboundEvent, *, settings: Settings) -> None:
     """Process a Twilio event after the webhook response has already been sent.
 
@@ -104,35 +194,43 @@ async def process_deferred_twilio_event(event: InboundEvent, *, settings: Settin
     download, Gemini extraction, and LLM parsing, and text turns also take 10 to
     15 seconds for the AI parse, so the webhook returns a fast TwiML
     acknowledgement and this helper sends the real result afterwards. For text
-    turns it also sends a short 'thinking' message first, because Twilio has no
-    native typing indicator and the chat would otherwise sit blank.
+    turns it shows the native WhatsApp 'typing…' indicator (with a 'thinking'
+    text message as a fallback) so the chat never sits blank.
     """
 
-    # Twilio has no typing indicator. Send a short "thinking" message first so the
-    # chat is never blank during the AI turn; the real reply follows right after.
-    if not event.media:
-        try:
-            await send_twilio_text_reply(event, _INTERIM_THINKING_MESSAGE, settings=settings)
-        except Exception:
-            logger.warning("Twilio interim thinking message failed", exc_info=True)
+    # Show the native typing indicator for the whole AI turn. Twilio's indicator
+    # expires quickly, so the context manager refreshes it on an interval. Media
+    # uploads have their own progress state, so only use it for text turns.
+    typing_cm = twilio_typing(event, settings=settings) if not event.media else None
 
-    try:
-        with get_session_factory(settings)() as db_session:
-            body = await process_live_twilio_event(event, settings=settings, db_session=db_session)
-        await send_twilio_text_reply(event, body, settings=settings)
-    except Exception:
-        logger.exception(
-            "Deferred Twilio WhatsApp processing failed for platform_message_id=%s",
-            event.platform_message_id,
-        )
+    async def _run() -> None:
         try:
-            await send_twilio_text_reply(
-                event,
-                "Sorry, something went wrong while processing that update. Please try again.",
-                settings=settings,
-            )
+            with get_session_factory(settings)() as db_session:
+                body = await process_live_twilio_event(
+                    event,
+                    settings=settings,
+                    db_session=db_session,
+                )
+            await send_twilio_text_reply(event, body, settings=settings)
         except Exception:
-            logger.warning("Twilio error reply failed", exc_info=True)
+            logger.exception(
+                "Deferred Twilio WhatsApp processing failed for platform_message_id=%s",
+                event.platform_message_id,
+            )
+            try:
+                await send_twilio_text_reply(
+                    event,
+                    "Sorry, something went wrong while processing that update. Please try again.",
+                    settings=settings,
+                )
+            except Exception:
+                logger.warning("Twilio error reply failed", exc_info=True)
+
+    if typing_cm is not None:
+        async with typing_cm:
+            await _run()
+    else:
+        await _run()
 
 
 @router.post("/twilio/whatsapp")
@@ -163,8 +261,8 @@ async def receive_twilio_whatsapp(
     # Twilio expects webhook handlers to respond quickly (long handling triggers
     # retries). Acknowledge fast with a TwiML message, then run the slow AI turn
     # in the background and deliver the real reply as a follow-up. The deferred
-    # task also sends a short "thinking" message for text turns, since Twilio has
-    # no native typing indicator.
+    # task shows the native WhatsApp typing indicator (with a "thinking" text
+    # message as a fallback) for text turns.
     background_tasks.add_task(process_deferred_twilio_event, event, settings=settings)
     return Response(
         content=text_messaging_response(build_twilio_acknowledgement(event)),

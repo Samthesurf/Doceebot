@@ -68,7 +68,11 @@ class _TypingIndicator:
 
     async def __aenter__(self) -> "_TypingIndicator":
         # Show the bubble immediately, then keep it alive on a refresh loop.
-        await self._sender.send_typing(chat_id=self._chat_id)
+        # Any failure to send must not break the reply, so swallow it here too.
+        try:
+            await self._sender.send_typing(chat_id=self._chat_id)
+        except Exception:  # noqa: BLE001 - typing must never break the reply
+            logger.warning("Telegram typing indicator failed on entry", exc_info=True)
         self._task = asyncio.create_task(self._loop())
         return self
 

@@ -112,8 +112,13 @@ async def test_receive_twilio_text_acks_fast_and_defers_reply(monkeypatch):
     async def fake_send_twilio_text_reply(event, body, *, settings):
         sent_replies.append({"to": event.platform_chat_id, "body": body})
 
+    async def fake_send_typing_indicator(event, *, settings):
+        # Force the typing indicator to fail so the text fallback is exercised.
+        raise RuntimeError("typing not supported in test")
+
     monkeypatch.setattr(webhook, "process_live_twilio_event", fake_process_live_twilio_event)
     monkeypatch.setattr(webhook, "send_twilio_text_reply", fake_send_twilio_text_reply)
+    monkeypatch.setattr(webhook, "send_twilio_typing_indicator", fake_send_typing_indicator)
 
     class FakeSession:
         def __enter__(self):
@@ -157,6 +162,64 @@ async def test_receive_twilio_text_acks_fast_and_defers_reply(monkeypatch):
     bodies = [r["body"] for r in sent_replies]
     assert webhook._INTERIM_THINKING_MESSAGE in bodies
     assert "Final text reply" in bodies
+
+
+@pytest.mark.asyncio
+async def test_receive_twilio_text_shows_typing_indicator(monkeypatch):
+    typing_calls: list[dict[str, str]] = []
+    sent_replies: list[dict[str, str]] = []
+
+    async def fake_process_live_twilio_event(event, *, settings, db_session):
+        return "Final text reply"
+
+    async def fake_send_twilio_text_reply(event, body, *, settings):
+        sent_replies.append({"to": event.platform_chat_id, "body": body})
+
+    async def fake_send_typing_indicator(event, *, settings):
+        typing_calls.append(
+            {"channel": "whatsapp", "message_id": event.platform_message_id}
+        )
+
+    monkeypatch.setattr(webhook, "process_live_twilio_event", fake_process_live_twilio_event)
+    monkeypatch.setattr(webhook, "send_twilio_text_reply", fake_send_twilio_text_reply)
+    monkeypatch.setattr(webhook, "send_twilio_typing_indicator", fake_send_typing_indicator)
+
+    class FakeSession:
+        def __enter__(self):
+            return "background-db-session"
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    class FakeSessionFactory:
+        def __call__(self):
+            return FakeSession()
+
+    monkeypatch.setattr(webhook, "get_session_factory", lambda settings=None: FakeSessionFactory())
+
+    background_tasks = BackgroundTasks()
+    await webhook.receive_twilio_whatsapp(
+        FakeRequest(
+            {
+                "MessageSid": "SMTEXT123",
+                "From": "whatsapp:+234****5678",
+                "To": "whatsapp:+141****8886",
+                "WaId": "2348012345678",
+                "Body": "Completed DB dressing",
+                "NumMedia": "0",
+            }
+        ),
+        background_tasks,
+        settings=Settings(app_env="development", twilio_webhook_auth_enabled=False, _env_file=None),
+        db_session="request-db-session",
+    )
+
+    await background_tasks()
+    # The native typing indicator is shown, anchored to the inbound message SID.
+    assert typing_calls == [{"channel": "whatsapp", "message_id": "SMTEXT123"}]
+    # No "thinking" text fallback because the indicator succeeded.
+    assert all(r["body"] != webhook._INTERIM_THINKING_MESSAGE for r in sent_replies)
+    assert "Final text reply" in [r["body"] for r in sent_replies]
 
 
 @pytest.mark.asyncio

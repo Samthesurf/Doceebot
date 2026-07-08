@@ -190,7 +190,11 @@ async def test_receive_telegram_update_acks_then_defers_reply(monkeypatch, tmp_p
         {"message": {"message_id": 42}},
         request,
         BackgroundTasks(),
-        settings=Settings(local_storage_dir=str(tmp_path), _env_file=None),
+        settings=Settings(
+            local_storage_dir=str(tmp_path),
+            telegram_webhook_secret_token=None,
+            _env_file=None,
+        ),
         db_session=object(),
     )
 
