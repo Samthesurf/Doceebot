@@ -12,6 +12,8 @@ import type {
   AdminUsersResponse,
   AddMemberPayload,
   AddMemberResponse,
+  LinkEmailPayload,
+  LinkEmailResponse,
   OrgMember,
 } from './types';
 
@@ -1023,4 +1025,83 @@ export const addAdminUser = async (
   });
 };
 
+
+export const linkAdminEmail = async (
+  token: string | null,
+  payload: LinkEmailPayload
+): Promise<LinkEmailResponse> => {
+  if (demoMode) {
+    return new Promise((resolve, reject) => {
+      setTimeout(() => {
+        if (!payload.email.trim() || !payload.email.includes('@')) {
+          const err = new Error('A valid dashboard login email is required') as any;
+          err.status = 422;
+          reject(err);
+          return;
+        }
+        const org = MOCK_ORGANIZATIONS.find(o => o.id === payload.org_id);
+        if (!org) {
+          const err = new Error('Organization not found') as any;
+          err.status = 404;
+          reject(err);
+          return;
+        }
+        if (payload.identifier.includes('forbidden')) {
+          const err = new Error('Forbidden: You do not have permission to manage this organization.') as any;
+          err.status = 403;
+          reject(err);
+          return;
+        }
+        if (payload.identifier.includes('conflict')) {
+          const err = new Error('That email or identifier is already linked to a different user.') as any;
+          err.status = 409;
+          reject(err);
+          return;
+        }
+
+        const isWhatsapp = payload.platform === 'whatsapp';
+        const members = mockAdminMembers[payload.org_id] || [];
+        let member = members.find(m =>
+          isWhatsapp ? m.phone_number === payload.identifier : m.telegram_user_id === payload.identifier
+        );
+        const createdUser = !member;
+        if (!member) {
+          member = {
+            user_id: 'u-link-' + Math.random().toString(36).slice(2, 11),
+            display_name: payload.display_name || payload.identifier,
+            phone_number: isWhatsapp ? payload.identifier : null,
+            telegram_user_id: isWhatsapp ? null : payload.identifier,
+            role: payload.role || 'org_admin',
+            created_at: new Date().toISOString(),
+          };
+          mockAdminMembers[payload.org_id] = [...members, member];
+        } else if (payload.display_name) {
+          member.display_name = payload.display_name;
+        }
+        if (member.role !== (payload.role || 'org_admin')) {
+          member.role = payload.role || 'org_admin';
+        }
+
+        resolve({
+          org_id: payload.org_id,
+          organization_name: org.name,
+          user: member,
+          email: payload.email.trim().toLowerCase(),
+          email_previously_set: false,
+          created_user: createdUser,
+          created_membership: createdUser,
+          updated_membership_role: !createdUser,
+          updated_membership_email: true,
+        });
+      }, 500);
+    });
+  }
+  return fetchWithAuth<LinkEmailResponse>('/admin/link-email', token, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+};
 

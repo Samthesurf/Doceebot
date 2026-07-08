@@ -9,6 +9,7 @@ import {
   getAdminAccess,
   getAdminUsers,
   addAdminUser,
+  linkAdminEmail,
 } from '../api';
 import type {
   OverviewResponse,
@@ -27,6 +28,8 @@ import {
   UserPlus,
   CheckCircle2,
   AlertTriangle,
+  Mail,
+  Link2,
 } from 'lucide-react';
 
 export const DashboardView: React.FC = () => {
@@ -71,6 +74,17 @@ export const DashboardView: React.FC = () => {
   const [formSubmitting, setFormSubmitting] = useState(false);
   const [formSuccess, setFormSuccess] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
+
+  // Admin Email Linking States
+  const [linkOrgId, setLinkOrgId] = useState<string>('');
+  const [linkEmail, setLinkEmail] = useState<string>('');
+  const [linkPlatform, setLinkPlatform] = useState<'whatsapp' | 'telegram'>('whatsapp');
+  const [linkIdentifier, setLinkIdentifier] = useState<string>('');
+  const [linkRole, setLinkRole] = useState<'worker' | 'supervisor' | 'manager' | 'org_admin'>('org_admin');
+  const [linkDisplayName, setLinkDisplayName] = useState<string>('');
+  const [linkSubmitting, setLinkSubmitting] = useState(false);
+  const [linkSuccess, setLinkSuccess] = useState<string | null>(null);
+  const [linkError, setLinkError] = useState<string | null>(null);
 
   const fetchMembers = async (orgId: string) => {
     setMembersLoading(true);
@@ -151,6 +165,72 @@ export const DashboardView: React.FC = () => {
       }
     } finally {
       setFormSubmitting(false);
+    }
+  };
+
+  const handleLinkEmailSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!linkOrgId || !linkEmail.trim() || !linkIdentifier.trim()) {
+      setLinkError('Organization, dashboard login email, and bot user identifier are required.');
+      return;
+    }
+
+    setLinkSubmitting(true);
+    setLinkSuccess(null);
+    setLinkError(null);
+
+    try {
+      const payload = {
+        org_id: linkOrgId,
+        email: linkEmail.trim(),
+        platform: linkPlatform,
+        identifier: linkIdentifier.trim(),
+        role: linkRole,
+        display_name: linkDisplayName.trim() || undefined,
+      };
+
+      const res = await linkAdminEmail(token, payload);
+      const nameText = res.user.display_name || payload.identifier;
+      let detail = '';
+      if (res.created_user) {
+        detail += 'A new bot user record was created for them. ';
+      }
+      if (res.created_membership) {
+        detail += `They were added to ${res.organization_name} as ${formatRoleLabel(res.user.role)}. `;
+      } else if (res.updated_membership_role) {
+        detail += `Their role in ${res.organization_name} was set to ${formatRoleLabel(res.user.role)}. `;
+      }
+      if (res.email_previously_set) {
+        detail += 'Their dashboard email was already linked.';
+      } else {
+        detail += `Their dashboard email (${res.email}) is now linked.`;
+      }
+      const canManage = res.user.role === 'org_admin' || res.user.role === 'manager' || res.user.role === 'supervisor';
+      setLinkSuccess(
+        `Linked ${nameText}! ${detail} They can now sign in to the dashboard with that email${canManage ? ' and manage this organization' : ''}.`
+      );
+      setLinkEmail('');
+      setLinkIdentifier('');
+      setLinkDisplayName('');
+
+      if (linkOrgId === selectedOrgId) {
+        fetchMembers(linkOrgId);
+      }
+      const orgsRes = await getOrganizations(token);
+      setOrganizations(orgsRes.organizations);
+    } catch (err: any) {
+      console.error(err);
+      if (err.status === 403) {
+        setLinkError('Access Forbidden (403): You do not have permission to manage admins for this organization.');
+      } else if (err.status === 409) {
+        setLinkError('Conflict Detected (409): That email or identifier is already linked to a different user or organization.');
+      } else if (err.status === 422) {
+        setLinkError('Invalid Input (422): A valid dashboard login email is required.');
+      } else {
+        setLinkError(err.message || 'An unexpected error occurred while linking the email.');
+      }
+    } finally {
+      setLinkSubmitting(false);
     }
   };
 
@@ -805,6 +885,147 @@ export const DashboardView: React.FC = () => {
                   </div>
                 </div>
               )}
+            </div>
+
+            {/* Admin Email Linking Section */}
+            <div className="glass-card" style={{ marginTop: '2rem', borderLeft: '4px solid var(--accent-gold)' }}>
+              <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem', fontSize: '1.15rem' }}>
+                <Link2 size={18} style={{ color: 'var(--brown-700)' }} />
+                Link Dashboard Admin Email
+              </h3>
+              <p style={{ marginBottom: '1.25rem' }}>
+                Connect a teammate's dashboard sign-in email to their bot user record so they can log in and manage this organization.
+              </p>
+
+              {linkSuccess && (
+                <div className="glass-card" style={{ borderLeft: '4px solid var(--status-success-text)', background: 'var(--status-success-bg)', color: 'var(--status-success-text)', padding: '1rem', marginBottom: '1.25rem', fontSize: '0.85rem' }}>
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem' }}>
+                    <CheckCircle2 size={16} style={{ flexShrink: 0, marginTop: '0.1rem' }} />
+                    <div>{linkSuccess}</div>
+                  </div>
+                </div>
+              )}
+
+              {linkError && (
+                <div className="glass-card" style={{ borderLeft: '4px solid var(--status-error-text)', background: 'var(--status-error-bg)', color: 'var(--status-error-text)', padding: '1rem', marginBottom: '1.25rem', fontSize: '0.85rem' }}>
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem' }}>
+                    <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: '0.1rem' }} />
+                    <div>{linkError}</div>
+                  </div>
+                </div>
+              )}
+
+              <form onSubmit={handleLinkEmailSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                <div>
+                  <label className="form-label" htmlFor="link-org-id">Target Organization <span style={{ color: 'var(--status-error-text)' }}>*</span></label>
+                  <select
+                    id="link-org-id"
+                    className="form-select"
+                    value={linkOrgId}
+                    onChange={(e) => setLinkOrgId(e.target.value)}
+                    required
+                  >
+                    <option value="">-- Choose Organization --</option>
+                    {adminAccess?.organizations.map((org) => (
+                      <option key={org.id} value={org.id}>{org.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="form-label" htmlFor="link-email">Dashboard Login Email <span style={{ color: 'var(--status-error-text)' }}>*</span></label>
+                  <input
+                    id="link-email"
+                    type="email"
+                    className="form-input"
+                    placeholder="teammate@company.com"
+                    value={linkEmail}
+                    onChange={(e) => setLinkEmail(e.target.value)}
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="form-label" htmlFor="link-platform">Bot User Platform <span style={{ color: 'var(--status-error-text)' }}>*</span></label>
+                  <select
+                    id="link-platform"
+                    className="form-select"
+                    value={linkPlatform}
+                    onChange={(e) => setLinkPlatform(e.target.value as 'whatsapp' | 'telegram')}
+                    required
+                  >
+                    <option value="whatsapp">WhatsApp number</option>
+                    <option value="telegram">Telegram user ID</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="form-label" htmlFor="link-identifier">
+                    {linkPlatform === 'whatsapp' ? 'WhatsApp Phone Number' : 'Telegram User ID'} <span style={{ color: 'var(--status-error-text)' }}>*</span>
+                  </label>
+                  <input
+                    id="link-identifier"
+                    type="text"
+                    className="form-input"
+                    placeholder={linkPlatform === 'whatsapp' ? 'e.g. +155****4567' : 'e.g. username_or_id'}
+                    value={linkIdentifier}
+                    onChange={(e) => setLinkIdentifier(e.target.value)}
+                    required
+                  />
+                  <span style={{ fontSize: '0.75rem', color: 'var(--brown-500)', display: 'block', marginTop: '0.25rem' }}>
+                    {linkPlatform === 'whatsapp'
+                      ? 'Enter the same WhatsApp number this person uses with the bot.'
+                      : 'Enter the same Telegram identifier this person uses with the bot.'}
+                  </span>
+                </div>
+
+                <div>
+                  <label className="form-label" htmlFor="link-role">Authorization Role <span style={{ color: 'var(--status-error-text)' }}>*</span></label>
+                  <select
+                    id="link-role"
+                    className="form-select"
+                    value={linkRole}
+                    onChange={(e) => setLinkRole(e.target.value as any)}
+                    required
+                  >
+                    <option value="org_admin">Org Admin</option>
+                    <option value="manager">Manager</option>
+                    <option value="supervisor">Supervisor</option>
+                    <option value="worker">Worker</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="form-label" htmlFor="link-display-name">Display Name (Optional)</label>
+                  <input
+                    id="link-display-name"
+                    type="text"
+                    className="form-input"
+                    placeholder="e.g. Jane Smith"
+                    value={linkDisplayName}
+                    onChange={(e) => setLinkDisplayName(e.target.value)}
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  className="btn btn-primary"
+                  style={{ marginTop: '0.5rem', width: '100%', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.5rem' }}
+                  disabled={linkSubmitting}
+                >
+                  {linkSubmitting ? (
+                    <>
+                      <div className="spinner" style={{ width: '16px', height: '16px', border: '2px solid white', borderTopColor: 'transparent' }} />
+                      Linking Email...
+                    </>
+                  ) : (
+                    <>
+                      <Mail size={16} />
+                      Link Admin Email
+                    </>
+                  )}
+                </button>
+              </form>
             </div>
           </>
         )}

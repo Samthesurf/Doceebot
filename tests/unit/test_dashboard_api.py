@@ -282,3 +282,56 @@ def test_dashboard_admin_can_create_and_list_telegram_org_user(tmp_path):
     members = list_response.json()["members"]
     assert any(member["telegram_user_id"] == "7994559684" for member in members)
     assert any(member["display_name"] == "Telegram Tester" for member in members)
+
+
+def test_dashboard_admin_can_link_email_to_bot_user(tmp_path):
+    client, org_id = _client_with_dashboard_data(tmp_path)
+
+    create_response = client.post(
+        "/dashboard-api/admin/link-email",
+        json={
+            "org_id": str(org_id),
+            "email": "Teammate@Example.com",
+            "platform": "whatsapp",
+            "identifier": "+15500009999",
+            "role": "org_admin",
+            "display_name": "Linked Teammate",
+        },
+    )
+
+    assert create_response.status_code == 201
+    created = create_response.json()
+    assert created["organization_name"] == "Milk Brown Farms"
+    assert created["email"] == "teammate@example.com"
+    assert created["created_user"] is True
+    assert created["created_membership"] is True
+    assert created["updated_membership_email"] is True
+    assert created["user"]["phone_number"] == "+15500009999"
+    assert created["user"]["role"] == "org_admin"
+
+    # Use the freshly minted email as a dashboard login to confirm it is now linked.
+    app = client.app
+    app.dependency_overrides[require_dashboard_user] = lambda: DashboardUser(
+        uid="linked-admin",
+        email="teammate@example.com",
+        name="Linked Teammate",
+        picture=None,
+    )
+    access = client.get("/dashboard-api/admin/access")
+    assert access.status_code == 200
+    payload = access.json()
+    assert payload["linked_user_email"] == "teammate@example.com"
+    assert any(org["id"] == str(org_id) for org in payload["organizations"])
+
+    # Linking the same email to a different user record must conflict.
+    second = client.post(
+        "/dashboard-api/admin/link-email",
+        json={
+            "org_id": str(org_id),
+            "email": "teammate@example.com",
+            "platform": "telegram",
+            "identifier": "9990001112",
+            "role": "worker",
+        },
+    )
+    assert second.status_code == 409

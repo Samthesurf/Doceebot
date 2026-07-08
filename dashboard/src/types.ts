@@ -266,3 +266,24 @@ export interface AddMemberResponse {
   updated_membership_role: boolean;
 }
 
+export interface LinkEmailPayload {
+  org_id: string;
+  email: string;
+  platform: 'whatsapp' | 'telegram';
+  identifier: string;
+  role?: 'worker' | 'supervisor' | 'manager' | 'org_admin';
+  display_name?: string;
+}
+
+export interface LinkEmailResponse {
+  org_id: string;
+  organization_name: string;
+  user: OrgMember;
+  email: string;
+  email_previously_set: boolean;
+  created_user: boolean;
+  created_membership: boolean;
+  updated_membership_role: boolean;
+  updated_membership_email: boolean;
+}
+

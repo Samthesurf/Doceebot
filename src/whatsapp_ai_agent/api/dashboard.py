@@ -193,6 +193,27 @@ class OrgUserCreateResponse(BaseModel):
     updated_membership_role: bool
 
 
+class AdminEmailLinkRequest(BaseModel):
+    org_id: UUID
+    email: str = Field(min_length=3, max_length=255)
+    platform: str
+    identifier: str = Field(min_length=1, max_length=255)
+    role: str = "org_admin"
+    display_name: str | None = Field(default=None, max_length=255)
+
+
+class AdminEmailLinkResponse(BaseModel):
+    org_id: UUID
+    organization_name: str
+    user: OrganizationMemberRow
+    email: str
+    email_previously_set: bool
+    created_user: bool
+    created_membership: bool
+    updated_membership_role: bool
+    updated_membership_email: bool
+
+
 class TokenUsageTotals(BaseModel):
     request_count: int = 0
     success_count: int = 0
@@ -345,6 +366,16 @@ def _default_display_name(platform: str, identifier: str) -> str:
     if platform == "telegram":
         return f"Telegram User {identifier}"
     return f"WhatsApp User {identifier}"
+
+
+def _normalize_email(value: str) -> str:
+    normalized = (value or "").strip().lower()
+    if not normalized or "@" not in normalized or " " in normalized:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="A valid dashboard login email is required",
+        )
+    return normalized
 
 
 def _require_admin_memberships(
@@ -815,6 +846,123 @@ async def create_dashboard_org_user(
         created_user=created_user,
         created_membership=created_membership,
         updated_membership_role=updated_membership_role,
+    )
+
+
+@router.post(
+    "/admin/link-email",
+    response_model=AdminEmailLinkResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def link_dashboard_admin_email(
+    payload: AdminEmailLinkRequest,
+    user: DashboardUser = Depends(require_dashboard_user),
+    db_session: Session = Depends(get_db_session),
+) -> AdminEmailLinkResponse:
+    """Link a dashboard login email to a bot user record so the linked person
+    can sign in to the dashboard and, with an admin membership, manage the org."""
+    _, _, organization = _require_admin_org(user, db_session, payload.org_id)
+    role = _normalize_role(payload.role)
+    platform = _normalize_platform(payload.platform)
+    display_name = (payload.display_name or "").strip() or None
+
+    email = _normalize_email(payload.email)
+
+    existing_user = None
+    normalized_identifier: str
+    if platform == "telegram":
+        normalized_identifier = _normalize_telegram_identifier(payload.identifier)
+        existing_user = db_session.scalar(
+            select(User).where(User.telegram_user_id == normalized_identifier).limit(1)
+        )
+    else:
+        normalized_identifier = _normalize_whatsapp_identifier(payload.identifier)
+        existing_user = _find_user_by_whatsapp(db_session, normalized_identifier)
+
+    created_user = False
+    created_membership = False
+    updated_membership_role = False
+    updated_membership_email = False
+
+    if existing_user is None:
+        existing_user = User(
+            display_name=display_name or _default_display_name(platform, normalized_identifier),
+            phone_number=normalized_identifier if platform == "whatsapp" else None,
+            telegram_user_id=normalized_identifier if platform == "telegram" else None,
+        )
+        db_session.add(existing_user)
+        db_session.flush()
+        created_user = True
+    else:
+        other_membership = db_session.scalar(
+            select(Membership)
+            .where(Membership.user_id == existing_user.id, Membership.org_id != organization.id)
+            .limit(1)
+        )
+        if other_membership is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "That identifier already belongs to a different organization. "
+                    "Cross-organization memberships break automatic bot routing."
+                ),
+            )
+        if display_name and display_name != existing_user.display_name:
+            existing_user.display_name = display_name
+        if platform == "whatsapp" and not existing_user.phone_number:
+            existing_user.phone_number = normalized_identifier
+        if platform == "telegram" and not existing_user.telegram_user_id:
+            existing_user.telegram_user_id = normalized_identifier
+
+    email_owner = db_session.scalar(
+        select(User)
+        .where(func.lower(User.email) == email, User.id != existing_user.id)
+        .limit(1)
+    )
+    if email_owner is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="That email is already linked to a different user record.",
+        )
+    email_previously_set = bool(existing_user.email and existing_user.email.lower() == email)
+    if not email_previously_set:
+        existing_user.email = email
+        updated_membership_email = True
+
+    membership = db_session.scalar(
+        select(Membership).where(
+            Membership.user_id == existing_user.id,
+            Membership.org_id == organization.id,
+        ).limit(1)
+    )
+    if membership is None:
+        membership = Membership(org_id=organization.id, user_id=existing_user.id, role=role)
+        db_session.add(membership)
+        created_membership = True
+    elif membership.role != role:
+        membership.role = role
+        updated_membership_role = True
+
+    db_session.commit()
+    db_session.refresh(existing_user)
+
+    return AdminEmailLinkResponse(
+        org_id=organization.id,
+        organization_name=organization.name,
+        user=OrganizationMemberRow(
+            user_id=existing_user.id,
+            display_name=existing_user.display_name,
+            phone_number=existing_user.phone_number,
+            telegram_user_id=existing_user.telegram_user_id,
+            role=_normalize_role(membership.role),
+            created_at=existing_user.created_at,
+        ),
+        email=email,
+        email_previously_set=email_previously_set,
+        created_user=created_user,
+        created_membership=created_membership,
+        updated_membership_role=updated_membership_role,
+        updated_membership_email=updated_membership_email,
     )
 
 
