@@ -168,19 +168,37 @@ async def process_live_telegram_event_result(
         )
 
     if event.platform_chat_id is not None:
+        # Show the native 'typing…' indicator for the whole AI turn. Telegram
+        # expires a single typing action after roughly five seconds, so the
+        # context manager refreshes it on an interval. Any failure here must
+        # never block the actual reply, so it is swallowed.
         try:
             sender = TelegramSender(settings=settings)
-            await sender.send_typing(chat_id=event.platform_chat_id)
+            async with sender.typing(chat_id=event.platform_chat_id):
+                result = await process_inbound_event(
+                    resolution.event,
+                    settings=settings,
+                    db_session=db_session,
+                    download_media=True,
+                    extract_media=_media_extraction_enabled(settings),
+                )
         except Exception:
             logger.warning("Telegram typing indicator failed", exc_info=True)
-
-    result = await process_inbound_event(
-        resolution.event,
-        settings=settings,
-        db_session=db_session,
-        download_media=True,
-        extract_media=_media_extraction_enabled(settings),
-    )
+            result = await process_inbound_event(
+                resolution.event,
+                settings=settings,
+                db_session=db_session,
+                download_media=True,
+                extract_media=_media_extraction_enabled(settings),
+            )
+    else:
+        result = await process_inbound_event(
+            resolution.event,
+            settings=settings,
+            db_session=db_session,
+            download_media=True,
+            extract_media=_media_extraction_enabled(settings),
+        )
     db_session.commit()
     return TelegramProcessingOutcome(
         reply_text=result.reply_text,
