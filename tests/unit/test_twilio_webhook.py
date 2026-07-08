@@ -101,19 +101,32 @@ async def test_receive_twilio_media_returns_ack_and_defers_processing(monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_receive_twilio_text_keeps_final_reply_in_webhook(monkeypatch):
+async def test_receive_twilio_text_acks_fast_and_defers_reply(monkeypatch):
     processed: list[str] = []
-    interim_sent: list[InboundEvent] = []
+    sent_replies: list[dict[str, str]] = []
 
     async def fake_process_live_twilio_event(event, *, settings, db_session):
         processed.append(db_session)
         return "Final text reply"
 
-    async def fake_send_interim(event, *, settings):
-        interim_sent.append(event)
+    async def fake_send_twilio_text_reply(event, body, *, settings):
+        sent_replies.append({"to": event.platform_chat_id, "body": body})
 
     monkeypatch.setattr(webhook, "process_live_twilio_event", fake_process_live_twilio_event)
-    monkeypatch.setattr(webhook, "_send_interim_thinking_message", fake_send_interim)
+    monkeypatch.setattr(webhook, "send_twilio_text_reply", fake_send_twilio_text_reply)
+
+    class FakeSession:
+        def __enter__(self):
+            return "background-db-session"
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    class FakeSessionFactory:
+        def __call__(self):
+            return FakeSession()
+
+    monkeypatch.setattr(webhook, "get_session_factory", lambda settings=None: FakeSessionFactory())
 
     background_tasks = BackgroundTasks()
     response = await webhook.receive_twilio_whatsapp(
@@ -132,12 +145,18 @@ async def test_receive_twilio_text_keeps_final_reply_in_webhook(monkeypatch):
         db_session="request-db-session",
     )
 
-    assert b"Final text reply" in response.body
-    assert processed == ["request-db-session"]
-    assert background_tasks.tasks  # interim thinking message is queued
-    await background_tasks()  # drain so the interim message actually sends
-    assert len(interim_sent) == 1
-    assert interim_sent[0].platform_message_id == "SMTEXT123"
+    # The webhook returns a fast TwiML acknowledgement, not the final reply.
+    assert b"Final text reply" not in response.body
+    assert b"I received your work update" in response.body
+    assert processed == []  # heavy work is deferred, not run in the request
+
+    # Draining the background task runs the AI turn and sends both the interim
+    # "thinking" message and the final reply as follow-ups.
+    await background_tasks()
+    assert processed == ["background-db-session"]
+    bodies = [r["body"] for r in sent_replies]
+    assert webhook._INTERIM_THINKING_MESSAGE in bodies
+    assert "Final text reply" in bodies
 
 
 @pytest.mark.asyncio

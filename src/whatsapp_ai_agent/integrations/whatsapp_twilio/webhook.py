@@ -98,7 +98,23 @@ async def send_twilio_text_reply(
 
 
 async def process_deferred_twilio_event(event: InboundEvent, *, settings: Settings) -> None:
-    """Process a Twilio event after the webhook response has already been sent."""
+    """Process a Twilio event after the webhook response has already been sent.
+
+    Twilio expects webhook handlers to respond quickly. Media messages need
+    download, Gemini extraction, and LLM parsing, and text turns also take 10 to
+    15 seconds for the AI parse, so the webhook returns a fast TwiML
+    acknowledgement and this helper sends the real result afterwards. For text
+    turns it also sends a short 'thinking' message first, because Twilio has no
+    native typing indicator and the chat would otherwise sit blank.
+    """
+
+    # Twilio has no typing indicator. Send a short "thinking" message first so the
+    # chat is never blank during the AI turn; the real reply follows right after.
+    if not event.media:
+        try:
+            await send_twilio_text_reply(event, _INTERIM_THINKING_MESSAGE, settings=settings)
+        except Exception:
+            logger.warning("Twilio interim thinking message failed", exc_info=True)
 
     try:
         with get_session_factory(settings)() as db_session:
@@ -109,6 +125,14 @@ async def process_deferred_twilio_event(event: InboundEvent, *, settings: Settin
             "Deferred Twilio WhatsApp processing failed for platform_message_id=%s",
             event.platform_message_id,
         )
+        try:
+            await send_twilio_text_reply(
+                event,
+                "Sorry, something went wrong while processing that update. Please try again.",
+                settings=settings,
+            )
+        except Exception:
+            logger.warning("Twilio error reply failed", exc_info=True)
 
 
 @router.post("/twilio/whatsapp")
@@ -135,31 +159,20 @@ async def receive_twilio_whatsapp(
 
     event = parse_twilio_whatsapp_form(form, timezone_name=settings.app_timezone)
     request.app.state.last_twilio_event = event
-    if event.media:
-        background_tasks.add_task(process_deferred_twilio_event, event, settings=settings)
-        return Response(
-            content=text_messaging_response(build_twilio_acknowledgement(event)),
-            media_type="application/xml",
-        )
 
-    # Twilio has no typing indicator. Send a short "thinking" message first so the
-    # chat is never blank during the 10 to 15 second AI turn, then the real reply
-    # follows as a normal follow-up message.
-    background_tasks.add_task(_send_interim_thinking_message, event, settings=settings)
-
-    body = await process_live_twilio_event(event, settings=settings, db_session=db_session)
-    return Response(content=text_messaging_response(body), media_type="application/xml")
+    # Twilio expects webhook handlers to respond quickly (long handling triggers
+    # retries). Acknowledge fast with a TwiML message, then run the slow AI turn
+    # in the background and deliver the real reply as a follow-up. The deferred
+    # task also sends a short "thinking" message for text turns, since Twilio has
+    # no native typing indicator.
+    background_tasks.add_task(process_deferred_twilio_event, event, settings=settings)
+    return Response(
+        content=text_messaging_response(build_twilio_acknowledgement(event)),
+        media_type="application/xml",
+    )
 
 
 _INTERIM_THINKING_MESSAGE = (
     "Got it, working on that now. Give me a few seconds and I will send your draft."
 )
-
-
-async def _send_interim_thinking_message(event: InboundEvent, *, settings: Settings) -> None:
-    """Twilio has no typing indicator, so send a short 'thinking' message first."""
-    try:
-        await send_twilio_text_reply(event, _INTERIM_THINKING_MESSAGE, settings=settings)
-    except Exception:
-        logger.warning("Twilio interim thinking message failed", exc_info=True)
 

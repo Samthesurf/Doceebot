@@ -4,12 +4,12 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, Protocol
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from whatsapp_ai_agent.config import Settings, get_settings
 from whatsapp_ai_agent.core.events import InboundEvent
-from whatsapp_ai_agent.db.session import get_db_session
+from whatsapp_ai_agent.db.session import get_db_session, get_session_factory
 from whatsapp_ai_agent.documents.schemas import DocumentAutomationResult, ManagedDocumentSummary
 from whatsapp_ai_agent.integrations.telegram.parser import parse_telegram_update
 from whatsapp_ai_agent.integrations.telegram.sender import TelegramSender
@@ -220,10 +220,56 @@ async def process_live_telegram_event(
     return outcome.reply_text
 
 
+async def process_deferred_telegram_event(event: InboundEvent, *, settings: Settings) -> None:
+    """Process a Telegram event after the webhook response has already been sent.
+
+    Telegram expects webhook handlers to return a 200 quickly, but the AI turn
+    (LLM parse + DB writes) takes 10 to 15 seconds. So the handler acks the
+    message immediately and this task runs the heavy work, then sends the real
+    reply as a follow-up message. The typing indicator stays on for the whole
+    turn so the chat never looks frozen.
+    """
+
+    try:
+        with get_session_factory(settings)() as db_session:
+            outcome = await process_live_telegram_event_result(
+                event,
+                settings=settings,
+                db_session=db_session,
+            )
+        if event.platform_chat_id is not None:
+            sender = TelegramSender(settings=settings)
+            await sender.send_text(chat_id=event.platform_chat_id, text=outcome.reply_text)
+            await send_document_result_files(
+                sender=sender,
+                chat_id=event.platform_chat_id,
+                results=outcome.document_results,
+                settings=settings,
+            )
+    except Exception:
+        logger.exception(
+            "Deferred Telegram processing failed for platform_message_id=%s",
+            event.platform_message_id,
+        )
+        if event.platform_chat_id is not None:
+            try:
+                sender = TelegramSender(settings=settings)
+                await sender.send_text(
+                    chat_id=event.platform_chat_id,
+                    text=(
+                        "Sorry, something went wrong while processing that update. "
+                        "Please try sending it again."
+                    ),
+                )
+            except Exception:
+                logger.warning("Telegram error reply failed", exc_info=True)
+
+
 @router.post("/telegram/webhook")
 async def receive_telegram_update(
     update: dict[str, Any],
     request: Request,
+    background_tasks: BackgroundTasks,
     settings: Settings = Depends(get_settings),
     db_session: Session = Depends(get_db_session),
 ) -> dict[str, str]:
@@ -233,18 +279,14 @@ async def receive_telegram_update(
 
     event = parse_telegram_update(update, timezone_name=settings.app_timezone)
     request.app.state.last_telegram_event = event
-    outcome = await process_live_telegram_event_result(
-        event,
-        settings=settings,
-        db_session=db_session,
-    )
+
+    # Acknowledge immediately so the user sees a response in well under a second,
+    # then run the slow AI turn in the background and deliver the real reply after.
     if event.platform_chat_id is not None:
-        sender = TelegramSender(settings=settings)
-        await sender.send_text(chat_id=event.platform_chat_id, text=outcome.reply_text)
-        await send_document_result_files(
-            sender=sender,
-            chat_id=event.platform_chat_id,
-            results=outcome.document_results,
-            settings=settings,
-        )
+        try:
+            await acknowledge_telegram_event(event, settings)
+        except Exception:
+            logger.warning("Telegram acknowledgement failed", exc_info=True)
+
+    background_tasks.add_task(process_deferred_telegram_event, event, settings=settings)
     return {"status": "accepted"}

@@ -2,6 +2,7 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import pytest
+from fastapi import BackgroundTasks
 
 from whatsapp_ai_agent.config import Settings
 from whatsapp_ai_agent.core.events import InboundEvent
@@ -120,11 +121,12 @@ async def test_send_document_result_files_sends_updated_local_file(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_receive_telegram_update_sends_text_then_edited_file(monkeypatch, tmp_path):
+async def test_receive_telegram_update_acks_then_defers_reply(monkeypatch, tmp_path):
     storage_key = "orgs/org-1/managed/register.xlsx"
     local_file = tmp_path / storage_key
     local_file.parent.mkdir(parents=True)
     local_file.write_bytes(b"edited workbook bytes")
+    ack_texts = []
     sent_texts = []
     sent_documents = []
 
@@ -145,12 +147,19 @@ async def test_receive_telegram_update_sends_text_then_edited_file(monkeypatch, 
         changes=["Updated row 6 in sheet Field Register."],
     )
 
+    final_reply = "Document automation:\n- Updated: register.xlsx (1 row(s))"
+
     class FakeSender:
         def __init__(self, *, settings):
             self.settings = settings
 
         async def send_text(self, *, chat_id, text):
-            sent_texts.append({"chat_id": chat_id, "text": text})
+            # The handler sends the acknowledgement; the deferred task sends the
+            # final reply. Distinguish them by which message arrives first.
+            if text == final_reply:
+                sent_texts.append({"chat_id": chat_id, "text": text})
+            else:
+                ack_texts.append({"chat_id": chat_id, "text": text})
 
         async def send_document(self, *, chat_id, path, caption=None):
             sent_documents.append(
@@ -164,7 +173,7 @@ async def test_receive_telegram_update_sends_text_then_edited_file(monkeypatch, 
 
     async def fake_process_result(event, *, settings, db_session):
         return webhook.TelegramProcessingOutcome(
-            reply_text="Document automation:\n- Updated: register.xlsx (1 row(s))",
+            reply_text=final_reply,
             document_results=[result],
         )
 
@@ -180,17 +189,21 @@ async def test_receive_telegram_update_sends_text_then_edited_file(monkeypatch, 
     response = await webhook.receive_telegram_update(
         {"message": {"message_id": 42}},
         request,
+        BackgroundTasks(),
         settings=Settings(local_storage_dir=str(tmp_path), _env_file=None),
         db_session=object(),
     )
 
+    # The webhook returns immediately after acking; the real reply is deferred.
     assert response == {"status": "accepted"}
-    assert sent_texts == [
-        {
-            "chat_id": "1001",
-            "text": "Document automation:\n- Updated: register.xlsx (1 row(s))",
-        }
-    ]
+    assert ack_texts == [{"chat_id": "1001", "text": TEXT_ACK}]
+    assert sent_texts == []  # final reply not sent during the request
+
+    # Dragging the deferred background task runs the heavy work and delivers.
+    await webhook.process_deferred_telegram_event(
+        make_event(),
+        settings=Settings(local_storage_dir=str(tmp_path), _env_file=None),
+    )
+    assert sent_texts == [{"chat_id": "1001", "text": final_reply}]
     assert sent_documents[0]["chat_id"] == "1001"
     assert sent_documents[0]["filename"] == "register.xlsx"
-    assert sent_documents[0]["bytes"] == b"edited workbook bytes"
