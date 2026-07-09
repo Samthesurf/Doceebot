@@ -62,6 +62,7 @@ class DeepSeekClient:
         user_prompt: str,
         schema: type[T],
         temperature: float = 0.1,
+        disable_thinking: bool = False,
     ) -> T:
         body: dict[str, Any] = {
             "model": self.settings.deepseek_model,
@@ -72,6 +73,12 @@ class DeepSeekClient:
             "temperature": temperature,
             "response_format": {"type": "json_object"},
         }
+        if disable_thinking:
+            # DeepSeek V4 defaults to thinking mode, which adds substantial
+            # reasoning tokens and several extra seconds to otherwise simple
+            # structured chat-parse turns. For live bot replies we want the
+            # fastest non-thinking JSON path.
+            body["thinking"] = {"type": "disabled"}
         response: httpx.Response | None = None
         transient_statuses = {429, 500, 502, 503, 504}
         for attempt in range(3):
@@ -116,6 +123,7 @@ class DeepSeekClient:
                 conversation_context=conversation_context,
             ),
             schema=ChatParseResult,
+            disable_thinking=True,
         )
 
     async def build_report_spec(

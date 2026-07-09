@@ -87,5 +87,6 @@ async def test_deepseek_parse_chat_event_posts_json_schema_request():
     assert captured["headers"]["authorization"] == "Bearer deepseek-test-key"
     assert captured["body"]["model"] == "deepseek-test-model"
     assert captured["body"]["response_format"] == {"type": "json_object"}
+    assert captured["body"]["thinking"] == {"type": "disabled"}
     assert parsed.work_logs[0].title == "DB dressing"
     assert parsed.work_logs[0].actions_taken == ["Dressed DB", "Tested continuity"]

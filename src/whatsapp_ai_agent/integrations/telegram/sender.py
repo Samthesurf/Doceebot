@@ -26,46 +26,6 @@ class TelegramSender:
         """
         await self.bot.send_chat_action(chat_id=chat_id, action="typing")
 
-    async def stream_text(
-        self,
-        *,
-        chat_id: str | int,
-        text: str,
-        chunk_size: int = 24,
-        delay_seconds: float = 0.06,
-    ) -> None:
-        """Reveal ``text`` progressively by editing a single message.
-
-        Sends an initial message and then appends small chunks on a short
-        interval so the reply appears to 'type out' live instead of arriving as
-        one instantaneous block. Any Telegram error is swallowed so the final
-        full text is still delivered (the caller also sends it as a fallback).
-        """
-
-        if not text:
-            return
-        message = await self.bot.send_message(chat_id=chat_id, text=text[:chunk_size])
-        shown = text[:chunk_size]
-        try:
-            for i in range(chunk_size, len(text), chunk_size):
-                await asyncio.sleep(delay_seconds)
-                shown = text[: i + chunk_size]
-                await self.bot.edit_message_text(
-                    chat_id=chat_id,
-                    message_id=message.message_id,
-                    text=shown,
-                )
-        except Exception:  # noqa: BLE001 - never let streaming mask the reply
-            logger.warning("Telegram progressive reveal failed", exc_info=True)
-            try:
-                await self.bot.edit_message_text(
-                    chat_id=chat_id,
-                    message_id=message.message_id,
-                    text=text,
-                )
-            except Exception:
-                logger.warning("Telegram progressive reveal cleanup failed", exc_info=True)
-
     def typing(self, *, chat_id: str | int) -> "_TypingIndicator":
         """Return an async context manager that shows a live 'typing…' indicator.
 
