@@ -239,7 +239,12 @@ async def process_deferred_telegram_event(event: InboundEvent, *, settings: Sett
             )
         if event.platform_chat_id is not None:
             sender = TelegramSender(settings=settings)
-            await sender.send_text(chat_id=event.platform_chat_id, text=outcome.reply_text)
+            # Reveal the reply progressively (edit one message) so it types out
+            # live instead of arriving as a single instantaneous block. The
+            # typing indicator already covered the wait; this removes the dump.
+            await sender.stream_text(
+                chat_id=event.platform_chat_id, text=outcome.reply_text
+            )
             await send_document_result_files(
                 sender=sender,
                 chat_id=event.platform_chat_id,

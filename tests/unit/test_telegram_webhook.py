@@ -161,6 +161,10 @@ async def test_receive_telegram_update_acks_then_defers_reply(monkeypatch, tmp_p
             else:
                 ack_texts.append({"chat_id": chat_id, "text": text})
 
+        async def stream_text(self, *, chat_id, text):
+            # Progressive reveal collapses to the full reply in this fake.
+            sent_texts.append({"chat_id": chat_id, "text": text})
+
         async def send_document(self, *, chat_id, path, caption=None):
             sent_documents.append(
                 {
