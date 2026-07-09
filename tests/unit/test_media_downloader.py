@@ -173,6 +173,23 @@ class FakeVideoDownloader:
         )
 
 
+class FakeThumbnailVideoDownloader:
+    async def download(self, media: MediaRef) -> DownloadedMedia:
+        if media.content_type == "image/jpeg":
+            return DownloadedMedia(
+                media=media,
+                data=b"fake jpg bytes",
+                content_type="image/jpeg",
+                filename=None,
+            )
+        return DownloadedMedia(
+            media=media,
+            data=b"fake mp4 bytes",
+            content_type="video/mp4",
+            filename="clip.mp4",
+        )
+
+
 class FailingMediaExtractor:
     async def extract_media(self, *args, **kwargs):
         raise AssertionError("Gemini should not be called for unsupported document MIME types")
@@ -373,6 +390,93 @@ async def test_process_inbound_event_extracts_video_upload_with_gemini(
     assert extractor_calls[0]["caption"] == "Short site walkthrough"
     assert normalizer.media_extractions is not None
     assert normalizer.media_extractions[0].extracted_text == "Breaker room walkthrough"
+    assert result.reply_text.startswith("I uploaded and parsed clip.mp4.")
+
+
+@pytest.mark.asyncio
+async def test_process_inbound_event_uses_video_thumbnail_to_avoid_stalling_reply(
+    tmp_path,
+    db_session,
+):
+    org_id = uuid4()
+    user_id = uuid4()
+    settings = Settings(local_storage_dir=str(tmp_path), _env_file=None)
+    normalizer = CapturingNormalizer()
+    extractor_calls = []
+
+    class ThumbnailFirstExtractor:
+        async def extract_media(
+            self,
+            data,
+            *,
+            content_type,
+            media_kind,
+            filename=None,
+            caption=None,
+        ):
+            extractor_calls.append(
+                {
+                    "data": data,
+                    "content_type": content_type,
+                    "media_kind": media_kind,
+                    "filename": filename,
+                    "caption": caption,
+                }
+            )
+            from whatsapp_ai_agent.llm.schemas import MediaExtraction
+
+            if content_type == "image/jpeg":
+                return MediaExtraction(
+                    extracted_text="Radar antenna on a tower",
+                    media_kind="image",
+                    notable_details=["Recovered from Telegram video thumbnail"],
+                    uncertain_parts=[],
+                    confidence=0.88,
+                )
+            raise RuntimeError("Video extraction unavailable")
+
+    result = await process_inbound_event(
+        make_event(
+            message_type="video",
+            text="Radar inspection clip",
+            media=[
+                MediaRef(
+                    platform_media_id="thumb-file",
+                    content_type="image/jpeg",
+                    index=0,
+                ),
+                MediaRef(
+                    platform_media_id="video-file",
+                    filename="clip.mp4",
+                    content_type="video/mp4",
+                    index=1,
+                ),
+            ],
+        ),
+        org_id=org_id,
+        user_id=user_id,
+        db_session=db_session,
+        normalizer=normalizer,
+        settings=settings,
+        download_media=True,
+        extract_media=True,
+        media_downloader=FakeThumbnailVideoDownloader(),
+        media_extractor=ThumbnailFirstExtractor(),
+        store_reports=False,
+    )
+
+    assert len(extractor_calls) == 2
+    assert extractor_calls[0]["content_type"] == "image/jpeg"
+    assert extractor_calls[0]["media_kind"] == "image"
+    assert extractor_calls[1]["content_type"] == "video/mp4"
+    assert normalizer.media_extractions is not None
+    assert len(normalizer.media_extractions) == 2
+    assert normalizer.media_extractions[0].extracted_text == "Radar antenna on a tower"
+    assert normalizer.media_extractions[1].extracted_text == ""
+    assert (
+        "Media extraction failed: RuntimeError."
+        in normalizer.media_extractions[1].notable_details[-1]
+    )
     assert result.reply_text.startswith("I uploaded and parsed clip.mp4.")
 
 

@@ -62,11 +62,42 @@ def test_telegram_parser_handles_video_message():
     assert event.media[0].filename == "walkthrough.mp4"
 
 
-def test_telegram_parser_handles_location_message():
+def test_telegram_parser_prioritizes_video_thumbnail_as_image_context():
     event = parse_telegram_update(
         {
             "message": {
                 "message_id": 45,
+                "chat": {"id": 1001},
+                "from": {"id": 2002},
+                "caption": "Radar inspection clip",
+                "video": {
+                    "file_id": "video-file",
+                    "mime_type": "video/mp4",
+                    "file_size": 4321,
+                    "file_name": "walkthrough.mp4",
+                    "thumbnail": {
+                        "file_id": "thumb-file",
+                        "file_size": 321,
+                    },
+                },
+            }
+        }
+    )
+    assert event.message_type == "video"
+    assert event.text == "Radar inspection clip"
+    assert len(event.media) == 2
+    assert event.media[0].platform_media_id == "thumb-file"
+    assert event.media[0].content_type == "image/jpeg"
+    assert event.media[1].platform_media_id == "video-file"
+    assert event.media[1].content_type == "video/mp4"
+    assert event.media[1].filename == "walkthrough.mp4"
+
+
+def test_telegram_parser_handles_location_message():
+    event = parse_telegram_update(
+        {
+            "message": {
+                "message_id": 46,
                 "chat": {"id": 1001},
                 "from": {"id": 2002},
                 "location": {"latitude": 6.5244, "longitude": 3.3792},

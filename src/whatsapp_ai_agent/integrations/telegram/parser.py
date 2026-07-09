@@ -19,6 +19,20 @@ def _platform_timestamp(message: dict[str, Any]) -> datetime | None:
     return datetime.fromtimestamp(int(value), tz=UTC)
 
 
+def _video_thumbnail_media(video: dict[str, Any]) -> MediaRef | None:
+    thumbnail = video.get("thumbnail") or video.get("thumb")
+    if not isinstance(thumbnail, dict):
+        return None
+    if not thumbnail.get("file_id"):
+        return None
+    return MediaRef(
+        platform_media_id=thumbnail.get("file_id"),
+        content_type="image/jpeg",
+        size_bytes=thumbnail.get("file_size"),
+        index=0,
+    )
+
+
 def _media_from_message(message: dict[str, Any]) -> tuple[str, list[MediaRef], str | None]:
     if "voice" in message:
         voice = message["voice"]
@@ -50,17 +64,23 @@ def _media_from_message(message: dict[str, Any]) -> tuple[str, list[MediaRef], s
         )
     if "video" in message:
         video = message["video"]
+        media: list[MediaRef] = []
+        thumbnail_media = _video_thumbnail_media(video)
+        if thumbnail_media is not None:
+            media.append(thumbnail_media)
+        video_index = len(media)
+        media.append(
+            MediaRef(
+                platform_media_id=video.get("file_id"),
+                content_type=video.get("mime_type") or "video/mp4",
+                filename=video.get("file_name"),
+                size_bytes=video.get("file_size"),
+                index=video_index,
+            )
+        )
         return (
             "video",
-            [
-                MediaRef(
-                    platform_media_id=video.get("file_id"),
-                    content_type=video.get("mime_type") or "video/mp4",
-                    filename=video.get("file_name"),
-                    size_bytes=video.get("file_size"),
-                    index=0,
-                )
-            ],
+            media,
             message.get("caption"),
         )
     if "document" in message:
