@@ -8,6 +8,12 @@ doceebot.name.ng {
 
 	reverse_proxy 127.0.0.1:8000 {
 		header_up X-Real-IP {remote_host}
+		# Fail fast if an origin worker wedges: surface a 504 instead of letting
+		# Cloudflare wait ~100s and return a 524.
+		transport http {
+			read_timeout 25s
+			write_timeout 25s
+		}
 	}
 
 	header {

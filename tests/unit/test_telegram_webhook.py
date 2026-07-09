@@ -1,8 +1,8 @@
+import asyncio
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import pytest
-from fastapi import BackgroundTasks
 
 from whatsapp_ai_agent.config import Settings
 from whatsapp_ai_agent.core.events import InboundEvent
@@ -189,7 +189,6 @@ async def test_receive_telegram_update_acks_then_defers_reply(monkeypatch, tmp_p
     response = await webhook.receive_telegram_update(
         {"message": {"message_id": 42}},
         request,
-        BackgroundTasks(),
         settings=Settings(
             local_storage_dir=str(tmp_path),
             telegram_webhook_secret_token=None,
@@ -198,16 +197,15 @@ async def test_receive_telegram_update_acks_then_defers_reply(monkeypatch, tmp_p
         db_session=object(),
     )
 
-    # The webhook returns immediately after acking; the real reply is deferred.
+    # The webhook acks immediately and spawns a daemon thread for the heavy AI
+    # turn. Wait for that thread to deliver both the final reply and the document.
+    for _ in range(100):
+        if sent_texts and sent_documents:
+            break
+        await asyncio.sleep(0.02)
+
     assert response == {"status": "accepted"}
     assert ack_texts == [{"chat_id": "1001", "text": TEXT_ACK}]
-    assert sent_texts == []  # final reply not sent during the request
-
-    # Dragging the deferred background task runs the heavy work and delivers.
-    await webhook.process_deferred_telegram_event(
-        make_event(),
-        settings=Settings(local_storage_dir=str(tmp_path), _env_file=None),
-    )
     assert sent_texts == [{"chat_id": "1001", "text": final_reply}]
     assert sent_documents[0]["chat_id"] == "1001"
     assert sent_documents[0]["filename"] == "register.xlsx"

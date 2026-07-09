@@ -1,10 +1,12 @@
+import asyncio
+import threading
 from dataclasses import dataclass, field
 from logging import getLogger
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, Protocol
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from whatsapp_ai_agent.config import Settings, get_settings
@@ -228,6 +230,13 @@ async def process_deferred_telegram_event(event: InboundEvent, *, settings: Sett
     message immediately and this task runs the heavy work, then sends the real
     reply as a follow-up message. The typing indicator stays on for the whole
     turn so the chat never looks frozen.
+
+    This coroutine is invoked from a dedicated daemon thread (see the webhook
+    handler), NOT from FastAPI BackgroundTasks on the request event loop. Running
+    it in its own thread keeps the event loop free to ack and process the next
+    inbound message immediately; otherwise the 10-15s turn blocks the worker and,
+    under load, wedges every worker so even /health stops answering (Cloudflare
+    then returns 524).
     """
 
     try:
@@ -269,7 +278,6 @@ async def process_deferred_telegram_event(event: InboundEvent, *, settings: Sett
 async def receive_telegram_update(
     update: dict[str, Any],
     request: Request,
-    background_tasks: BackgroundTasks,
     settings: Settings = Depends(get_settings),
     db_session: Session = Depends(get_db_session),
 ) -> dict[str, str]:
@@ -281,12 +289,31 @@ async def receive_telegram_update(
     request.app.state.last_telegram_event = event
 
     # Acknowledge immediately so the user sees a response in well under a second,
-    # then run the slow AI turn in the background and deliver the real reply after.
+    # then run the slow AI turn (10-15s) in its OWN daemon thread with a private
+    # event loop. This keeps the request event loop free to ack and process the
+    # next inbound message; otherwise FastAPI BackgroundTasks runs the turn on the
+    # same loop and blocks the worker, which under load wedges every worker and
+    # makes even /health time out (Cloudflare then returns 524).
     if event.platform_chat_id is not None:
         try:
             await acknowledge_telegram_event(event, settings)
         except Exception:
             logger.warning("Telegram acknowledgement failed", exc_info=True)
 
-    background_tasks.add_task(process_deferred_telegram_event, event, settings=settings)
+    def _run_deferred() -> None:
+        try:
+            loop = asyncio.new_event_loop()
+            try:
+                loop.run_until_complete(
+                    process_deferred_telegram_event(event, settings=settings)
+                )
+            finally:
+                loop.close()
+        except Exception:
+            logger.exception(
+                "Deferred Telegram thread failed for platform_message_id=%s",
+                event.platform_message_id,
+            )
+
+    threading.Thread(target=_run_deferred, name="telegram-deferred", daemon=True).start()
     return {"status": "accepted"}
