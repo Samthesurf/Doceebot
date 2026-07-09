@@ -1,3 +1,4 @@
+import asyncio
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
@@ -112,13 +113,14 @@ async def test_receive_twilio_text_acks_fast_and_defers_reply(monkeypatch):
     async def fake_send_twilio_text_reply(event, body, *, settings):
         sent_replies.append({"to": event.platform_chat_id, "body": body})
 
-    async def fake_send_typing_indicator(event, *, settings):
-        # Force the typing indicator to fail so the text fallback is exercised.
-        raise RuntimeError("typing not supported in test")
-
     monkeypatch.setattr(webhook, "process_live_twilio_event", fake_process_live_twilio_event)
     monkeypatch.setattr(webhook, "send_twilio_text_reply", fake_send_twilio_text_reply)
-    monkeypatch.setattr(webhook, "send_twilio_typing_indicator", fake_send_typing_indicator)
+    # The typing indicator now runs as a detached concurrent task (with the
+    # "thinking" fallback inside it). Stub it so the test does not touch Twilio
+    # and so the deferred reply is the only message sent by this path.
+    monkeypatch.setattr(
+        webhook, "refresh_twilio_typing_indicator", lambda *a, **k: asyncio.sleep(0)
+    )
 
     class FakeSession:
         def __enter__(self):
@@ -155,34 +157,36 @@ async def test_receive_twilio_text_acks_fast_and_defers_reply(monkeypatch):
     assert b"I received your work update" in response.body
     assert processed == []  # heavy work is deferred, not run in the request
 
-    # Draining the background task runs the AI turn and sends both the interim
-    # "thinking" message and the final reply as follow-ups.
+    # Draining the background task runs the AI turn and sends the final reply.
+    # (The interim "thinking" message and typing indicator are fired by a
+    # separate detached task, stubbed here so this path only sends the reply.)
     await background_tasks()
     assert processed == ["background-db-session"]
     bodies = [r["body"] for r in sent_replies]
-    assert webhook._INTERIM_THINKING_MESSAGE in bodies
     assert "Final text reply" in bodies
 
 
 @pytest.mark.asyncio
 async def test_receive_twilio_text_shows_typing_indicator(monkeypatch):
-    typing_calls: list[dict[str, str]] = []
+    typing_calls: list[InboundEvent] = []
     sent_replies: list[dict[str, str]] = []
 
     async def fake_process_live_twilio_event(event, *, settings, db_session):
+        await asyncio.sleep(0)  # yield so the concurrent typing task can run
         return "Final text reply"
 
     async def fake_send_twilio_text_reply(event, body, *, settings):
         sent_replies.append({"to": event.platform_chat_id, "body": body})
 
-    async def fake_send_typing_indicator(event, *, settings):
-        typing_calls.append(
-            {"channel": "whatsapp", "message_id": event.platform_message_id}
-        )
+    async def fake_refresh_typing_indicator(event, *, settings):
+        # Mirrors the real call: shows the native indicator anchored to the SID.
+        typing_calls.append(event)
 
     monkeypatch.setattr(webhook, "process_live_twilio_event", fake_process_live_twilio_event)
     monkeypatch.setattr(webhook, "send_twilio_text_reply", fake_send_twilio_text_reply)
-    monkeypatch.setattr(webhook, "send_twilio_typing_indicator", fake_send_typing_indicator)
+    monkeypatch.setattr(
+        webhook, "refresh_twilio_typing_indicator", fake_refresh_typing_indicator
+    )
 
     class FakeSession:
         def __enter__(self):
@@ -215,10 +219,10 @@ async def test_receive_twilio_text_shows_typing_indicator(monkeypatch):
     )
 
     await background_tasks()
-    # The native typing indicator is shown, anchored to the inbound message SID.
-    assert typing_calls == [{"channel": "whatsapp", "message_id": "SMTEXT123"}]
-    # No "thinking" text fallback because the indicator succeeded.
-    assert all(r["body"] != webhook._INTERIM_THINKING_MESSAGE for r in sent_replies)
+    # The native typing indicator is requested for the text turn, anchored to
+    # the inbound message SID, and it runs concurrently (never blocks the reply).
+    assert len(typing_calls) == 1
+    assert typing_calls[0].platform_message_id == "SMTEXT123"
     assert "Final text reply" in [r["body"] for r in sent_replies]
 
 
