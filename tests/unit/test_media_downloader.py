@@ -163,6 +163,16 @@ class FakeXlsxDownloader:
         )
 
 
+class FakeVideoDownloader:
+    async def download(self, media: MediaRef) -> DownloadedMedia:
+        return DownloadedMedia(
+            media=media,
+            data=b"fake mp4 bytes",
+            content_type="video/mp4",
+            filename="clip.mp4",
+        )
+
+
 class FailingMediaExtractor:
     async def extract_media(self, *args, **kwargs):
         raise AssertionError("Gemini should not be called for unsupported document MIME types")
@@ -172,7 +182,7 @@ class CapturingNormalizer:
     def __init__(self) -> None:
         self.media_extractions = None
 
-    async def parse_chat_event(self, event, *, media_extractions=None):
+    async def parse_chat_event(self, event, *, media_extractions=None, conversation_context=None):
         self.media_extractions = media_extractions
         return ChatParseResult(
             intent="work_log",
@@ -288,6 +298,82 @@ async def test_process_inbound_event_skips_gemini_for_xlsx_upload(
     assert normalizer.media_extractions is not None
     assert normalizer.media_extractions[0].extracted_text == ""
     assert "Skipped Gemini media extraction" in normalizer.media_extractions[0].notable_details[-1]
+
+
+@pytest.mark.asyncio
+async def test_process_inbound_event_extracts_video_upload_with_gemini(
+    tmp_path,
+    db_session,
+):
+    org_id = uuid4()
+    user_id = uuid4()
+    settings = Settings(local_storage_dir=str(tmp_path), _env_file=None)
+    normalizer = CapturingNormalizer()
+    extractor_calls = []
+
+    class RecordingVideoExtractor:
+        async def extract_media(
+            self,
+            data,
+            *,
+            content_type,
+            media_kind,
+            filename=None,
+            caption=None,
+        ):
+            extractor_calls.append(
+                {
+                    "data": data,
+                    "content_type": content_type,
+                    "media_kind": media_kind,
+                    "filename": filename,
+                    "caption": caption,
+                }
+            )
+            from whatsapp_ai_agent.llm.schemas import MediaExtraction
+
+            return MediaExtraction(
+                extracted_text="Breaker room walkthrough",
+                media_kind="document",
+                notable_details=["Shows the breaker room setup"],
+                uncertain_parts=[],
+                confidence=0.92,
+            )
+
+    result = await process_inbound_event(
+        make_event(
+            message_type="video",
+            text="Short site walkthrough",
+            media=[
+                MediaRef(
+                    platform_media_id="video-file",
+                    filename="clip.mp4",
+                    content_type="video/mp4",
+                    index=0,
+                )
+            ],
+        ),
+        org_id=org_id,
+        user_id=user_id,
+        db_session=db_session,
+        normalizer=normalizer,
+        settings=settings,
+        download_media=True,
+        extract_media=True,
+        media_downloader=FakeVideoDownloader(),
+        media_extractor=RecordingVideoExtractor(),
+        store_reports=False,
+    )
+
+    assert len(extractor_calls) == 1
+    assert extractor_calls[0]["data"] == b"fake mp4 bytes"
+    assert extractor_calls[0]["content_type"] == "video/mp4"
+    assert extractor_calls[0]["media_kind"] == "document"
+    assert extractor_calls[0]["filename"] == "clip.mp4"
+    assert extractor_calls[0]["caption"] == "Short site walkthrough"
+    assert normalizer.media_extractions is not None
+    assert normalizer.media_extractions[0].extracted_text == "Breaker room walkthrough"
+    assert result.reply_text.startswith("I uploaded and parsed clip.mp4.")
 
 
 @dataclass(frozen=True)

@@ -48,6 +48,21 @@ def _media_from_message(message: dict[str, Any]) -> tuple[str, list[MediaRef], s
             ],
             message.get("caption"),
         )
+    if "video" in message:
+        video = message["video"]
+        return (
+            "video",
+            [
+                MediaRef(
+                    platform_media_id=video.get("file_id"),
+                    content_type=video.get("mime_type") or "video/mp4",
+                    filename=video.get("file_name"),
+                    size_bytes=video.get("file_size"),
+                    index=0,
+                )
+            ],
+            message.get("caption"),
+        )
     if "document" in message:
         document = message["document"]
         return (

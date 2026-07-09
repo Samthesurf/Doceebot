@@ -130,7 +130,7 @@ def _gemini_can_extract_content_type(content_type: str | None) -> bool:
         return False
     if content in _GEMINI_SUPPORTED_DOCUMENT_TYPES:
         return True
-    return content.startswith(("image/", "audio/", "text/"))
+    return content.startswith(("image/", "audio/", "text/", "video/"))
 
 
 def _metadata_only_media_extraction(

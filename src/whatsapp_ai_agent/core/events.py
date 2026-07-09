@@ -43,7 +43,16 @@ class InboundEvent(BaseModel):
     platform_message_id: str
     platform_user_id: str
     platform_chat_id: str
-    message_type: Literal["text", "voice", "audio", "image", "document", "location", "unknown"]
+    message_type: Literal[
+        "text",
+        "voice",
+        "audio",
+        "image",
+        "video",
+        "document",
+        "location",
+        "unknown",
+    ]
     text: str | None = None
     media: list[MediaRef] = Field(default_factory=list)
     location: LocationRef | None = None
