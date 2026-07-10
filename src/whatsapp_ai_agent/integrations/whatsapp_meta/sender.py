@@ -9,6 +9,38 @@ from whatsapp_ai_agent.integrations.whatsapp_meta.client import (
 )
 
 
+class MetaGraphApiError(RuntimeError):
+    """A safe, structured summary of a failed Meta Graph API request."""
+
+
+def _safe_graph_error_message(response: httpx.Response) -> str:
+    """Expose actionable Graph error fields without logging headers or raw bodies."""
+
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = None
+    error = payload.get("error") if isinstance(payload, dict) else None
+    if not isinstance(error, dict):
+        return f"Meta Graph API request failed (status={response.status_code}, no structured error)"
+
+    error_data = error.get("error_data")
+    details = error_data.get("details") if isinstance(error_data, dict) else None
+    fields = {
+        "status": response.status_code,
+        "type": error.get("type"),
+        "code": error.get("code"),
+        "subcode": error.get("error_subcode"),
+        "message": error.get("message"),
+        "details": details,
+        "fbtrace_id": error.get("fbtrace_id"),
+    }
+    formatted = ", ".join(
+        f"{name}={value}" for name, value in fields.items() if value is not None
+    )
+    return f"Meta Graph API request failed ({formatted})"
+
+
 class MetaWhatsAppSender:
     """Send WhatsApp Cloud API messages directly through Meta Graph API."""
 
@@ -46,7 +78,8 @@ class MetaWhatsAppSender:
                     "text": {"body": body},
                 },
             )
-            response.raise_for_status()
+            if response.is_error:
+                raise MetaGraphApiError(_safe_graph_error_message(response))
             payload: dict[str, Any] = response.json()
         finally:
             if owns_client:

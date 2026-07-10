@@ -5,7 +5,10 @@ import pytest
 
 from whatsapp_ai_agent.config import Settings
 from whatsapp_ai_agent.core.events import MediaRef
-from whatsapp_ai_agent.integrations.whatsapp_meta.sender import MetaWhatsAppSender
+from whatsapp_ai_agent.integrations.whatsapp_meta.sender import (
+    MetaGraphApiError,
+    MetaWhatsAppSender,
+)
 from whatsapp_ai_agent.media.downloader import MetaMediaDownloader
 
 
@@ -42,6 +45,44 @@ async def test_meta_sender_posts_graph_text_message_with_bearer_token():
         "type": "text",
         "text": {"body": "Your work update has been saved."},
     }
+
+
+@pytest.mark.asyncio
+async def test_meta_sender_surfaces_safe_graph_error_details_without_access_token():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            400,
+            json={
+                "error": {
+                    "message": "Recipient is not an allowed test recipient",
+                    "type": "OAuthException",
+                    "code": 131030,
+                    "error_subcode": 2494013,
+                    "error_data": {"details": "Add the recipient in the WhatsApp API setup."},
+                    "fbtrace_id": "trace-123",
+                }
+            },
+        )
+
+    settings = Settings(
+        meta_graph_api_base_url="https://graph.example.test",
+        meta_graph_api_version="v23.0",
+        meta_phone_number_id="1234567890123456",
+        meta_access_token="meta-access-token",
+        _env_file=None,
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(MetaGraphApiError) as exc_info:
+            await MetaWhatsAppSender(settings=settings, http_client=client).send_text(
+                to="2348012345678",
+                body="Your work update has been saved.",
+            )
+
+    error_text = str(exc_info.value)
+    assert "status=400" in error_text
+    assert "code=131030" in error_text
+    assert "Add the recipient" in error_text
+    assert "meta-access-token" not in error_text
 
 
 @pytest.mark.asyncio
