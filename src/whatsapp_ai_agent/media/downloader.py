@@ -12,6 +12,10 @@ import httpx
 
 from whatsapp_ai_agent.config import Settings, get_settings
 from whatsapp_ai_agent.core.events import InboundEvent, MediaRef
+from whatsapp_ai_agent.integrations.whatsapp_meta.client import (
+    meta_auth_headers,
+    meta_graph_api_url,
+)
 from whatsapp_ai_agent.media.storage import (
     StoredObject,
     get_media_storage,
@@ -214,17 +218,80 @@ class TwilioMediaDownloader:
         )
 
 
+class MetaMediaDownloader:
+    """Retrieve a Cloud API media object through Meta's authenticated two-step flow."""
+
+    def __init__(
+        self,
+        settings: Settings | None = None,
+        *,
+        http_client: httpx.AsyncClient | None = None,
+    ) -> None:
+        self.settings = settings or get_settings()
+        self.http_client = http_client
+
+    async def download(self, media: MediaRef) -> DownloadedMedia:
+        media_id = media.platform_media_id
+        if not media_id:
+            raise MediaDownloadError("Meta media is missing platform_media_id")
+
+        headers = meta_auth_headers(self.settings)
+        owns_client = self.http_client is None
+        client = self.http_client or httpx.AsyncClient(timeout=30.0, follow_redirects=True)
+        try:
+            metadata_response = await client.get(
+                meta_graph_api_url(self.settings, media_id),
+                headers=headers,
+            )
+            metadata_response.raise_for_status()
+            metadata = metadata_response.json()
+            if not isinstance(metadata, dict):
+                raise MediaDownloadError("Meta media metadata response was not an object")
+            download_url = metadata.get("url")
+            if not isinstance(download_url, str) or not download_url:
+                raise MediaDownloadError("Meta media metadata response did not include url")
+            file_response = await client.get(download_url, headers=headers)
+            file_response.raise_for_status()
+        finally:
+            if owns_client:
+                await client.aclose()
+
+        filename = media.filename
+        if not filename:
+            candidate = metadata.get("filename")
+            filename = candidate if isinstance(candidate, str) and candidate else None
+        if not filename:
+            filename = PurePosixPath(urlparse(download_url).path).name or None
+        content_type = _best_content_type(
+            response_content_type=file_response.headers.get("content-type"),
+            platform_content_type=media.content_type
+            or (metadata.get("mime_type") if isinstance(metadata.get("mime_type"), str) else None),
+            filename=filename,
+        )
+        if not filename:
+            filename = _filename_from_content_type(content_type, fallback=f"meta-{media.index}")
+        return DownloadedMedia(
+            media=media,
+            data=file_response.content,
+            content_type=content_type,
+            filename=filename,
+        )
+
+
 def downloader_for_event(
     event: InboundEvent,
     settings: Settings | None = None,
     *,
     telegram_http_client: httpx.AsyncClient | None = None,
     twilio_http_client: httpx.AsyncClient | None = None,
+    meta_http_client: httpx.AsyncClient | None = None,
 ) -> MediaDownloader:
     if event.platform == "telegram":
         return TelegramMediaDownloader(settings, http_client=telegram_http_client)
     if event.platform == "whatsapp_twilio":
         return TwilioMediaDownloader(settings, http_client=twilio_http_client)
+    if event.platform == "whatsapp_meta":
+        return MetaMediaDownloader(settings, http_client=meta_http_client)
     raise MediaDownloadError(f"Unsupported media platform: {event.platform}")
 
 

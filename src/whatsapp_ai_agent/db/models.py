@@ -24,6 +24,7 @@ class Base(DeclarativeBase):
 class Channel(StrEnum):
     TELEGRAM = "telegram"
     WHATSAPP_TWILIO = "whatsapp_twilio"
+    WHATSAPP_META = "whatsapp_meta"
 
 
 class Organization(Base):
@@ -173,6 +174,24 @@ class RawInboundMessage(Base):
     body_text: Mapped[str | None] = mapped_column(Text)
     received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     raw_payload_json: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class InboundEventClaim(Base):
+    """Durably reserves a provider event before asynchronous processing starts."""
+
+    __tablename__ = "inbound_event_claims"
+    __table_args__ = (
+        UniqueConstraint("platform", "platform_message_id", name="uq_inbound_claim_platform_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    platform: Mapped[str] = mapped_column(String(64), nullable=False)
+    platform_message_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    claimed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
 
 
 class WorkLogEntry(Base):

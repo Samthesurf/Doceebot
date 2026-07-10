@@ -34,6 +34,16 @@ class Settings(BaseSettings):
     twilio_messaging_service_sid: str | None = None
     twilio_webhook_auth_enabled: bool = False
 
+    meta_whatsapp_enabled: bool = False
+    meta_graph_api_base_url: str = "https://graph.facebook.com"
+    meta_graph_api_version: str = "v23.0"
+    meta_waba_id: str | None = None
+    meta_phone_number_id: str | None = None
+    meta_access_token: str | None = None
+    meta_app_secret: str | None = None
+    meta_webhook_verify_token: str | None = None
+    meta_webhook_auth_enabled: bool = False
+
     telegram_bot_token: str | None = None
     telegram_webhook_secret_token: str | None = None
     developer_escalation_telegram_chat_id: str | None = None
@@ -98,6 +108,9 @@ class Settings(BaseSettings):
         if self.twilio_webhook_auth_enabled and self.twilio_auth_token in _PLACEHOLDER_VALUES:
             errors.append("TWILIO_AUTH_TOKEN is required when Twilio webhook auth is enabled")
 
+        if self.meta_webhook_auth_enabled and self.meta_app_secret in _PLACEHOLDER_VALUES:
+            errors.append("META_APP_SECRET is required when Meta webhook auth is enabled")
+
         if self.media_storage_backend == "r2":
             if self.cloudflare_account_id in _PLACEHOLDER_VALUES:
                 errors.append("CLOUDFLARE_ACCOUNT_ID is required when MEDIA_STORAGE_BACKEND=r2")
@@ -113,6 +126,20 @@ class Settings(BaseSettings):
                 errors.append("TWILIO_WEBHOOK_AUTH_ENABLED must be true in production")
             if self.telegram_webhook_secret_token in _PLACEHOLDER_VALUES:
                 errors.append("TELEGRAM_WEBHOOK_SECRET_TOKEN must be set in production")
+            if self.meta_whatsapp_enabled:
+                if not self.meta_webhook_auth_enabled:
+                    errors.append(
+                        "META_WEBHOOK_AUTH_ENABLED must be true when Meta WhatsApp is enabled"
+                    )
+                for field_name, value in {
+                    "META_WABA_ID": self.meta_waba_id,
+                    "META_PHONE_NUMBER_ID": self.meta_phone_number_id,
+                    "META_ACCESS_TOKEN": self.meta_access_token,
+                    "META_APP_SECRET": self.meta_app_secret,
+                    "META_WEBHOOK_VERIFY_TOKEN": self.meta_webhook_verify_token,
+                }.items():
+                    if value in _PLACEHOLDER_VALUES:
+                        errors.append(f"{field_name} must be set when Meta WhatsApp is enabled")
 
         if errors:
             raise ValueError("; ".join(errors))

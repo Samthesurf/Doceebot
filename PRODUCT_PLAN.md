@@ -8,7 +8,7 @@
 
 **Current project state:** The folder already exists. It currently has a minimal `main.py`, a blank `README.md`, a `.venv`, and `pyproject.toml` with FastAPI and `opencode-ai` installed.
 
-**Architecture:** Keep WhatsApp and Telegram separate at the channel adapter layer, then send both into one shared ingestion, memory, retrieval, and document generation core. WhatsApp should use Twilio, not direct Meta Cloud API. Telegram should use a bot created through BotFather, then the backend should connect to it through the Telegram Bot API. In production, keep the main server focused on webhooks, relational data, permissions, summary rendering, and document generation. Put managed RAG and file search on Cloudflare where possible so it is an API call instead of infrastructure running on the server.
+**Architecture:** Keep WhatsApp and Telegram separate at the channel adapter layer, then send both into one shared ingestion, memory, retrieval, and document generation core. WhatsApp uses Twilio by default, with a separate direct Meta Cloud API adapter permitted for test-number validation and a later deliberate production cutover. Telegram should use a bot created through BotFather, then the backend should connect to it through the Telegram Bot API. In production, keep the main server focused on webhooks, relational data, permissions, summary rendering, and document generation. Put managed RAG and file search on Cloudflare where possible so it is an API call instead of infrastructure running on the server.
 
 **Tech Stack:** Python 3.11+, FastAPI, PostgreSQL, Redis, Celery or Dramatiq, SQLAlchemy or SQLModel, Alembic, Pydantic v2, Twilio Python SDK, python-telegram-bot or aiogram, python-docx, openpyxl, Google Gemini API, DeepSeek API, Cloudflare AI Search or AutoRAG, Cloudflare R2, optional Cloudflare Vectorize for custom retrieval, optional OpenCode sidecar, Docker Compose.
 
@@ -26,18 +26,27 @@ The correct folder is:
 
 Do not use `/home/samuelsurf/python_stuff/whatsapp_ai_agent`. That path was wrong for this project.
 
-### 1.2 WhatsApp integration correction
+### 1.2 WhatsApp integration
 
-WhatsApp is via Twilio.
+WhatsApp is via Twilio by default. The direct Meta WhatsApp Cloud API is also supported as an isolated provider adapter for Meta's test number. It must not replace Twilio or migrate a production phone number until webhook, message, media, tenant resolution, and reply tests pass end to end.
 
-This changes the plan significantly:
+Twilio adapter rules:
 
-- The WhatsApp webhook is a Twilio Messaging webhook, not a direct Meta Cloud API webhook.
-- Incoming message payloads arrive as Twilio form fields.
+- The Twilio webhook is a Messaging webhook and incoming payloads arrive as Twilio form fields.
 - Incoming media arrives through `NumMedia`, `MediaUrl0`, `MediaContentType0`, and related indexed fields.
-- Outgoing WhatsApp messages should use Twilio `client.messages.create(...)`.
+- Outgoing WhatsApp messages use Twilio `client.messages.create(...)`.
 - Outgoing files need a public or signed `media_url` that Twilio can fetch.
 - WhatsApp media size and MIME restrictions must follow Twilio and WhatsApp rules.
+
+Meta adapter rules:
+
+- Meta uses `GET` and `POST /webhooks/meta/whatsapp`.
+- The GET endpoint validates Meta's verify token and returns the raw challenge.
+- The POST endpoint verifies `X-Hub-Signature-256` against the raw body with the Meta App Secret before parsing messages.
+- Inbound Meta JSON is normalized into the same shared event model as Twilio and Telegram.
+- Incoming Meta media is retrieved by media ID using an authenticated Graph API metadata request followed by an authenticated download.
+- Outbound text is sent with the Graph API `/<PHONE_NUMBER_ID>/messages` endpoint.
+- Meta test IDs and runtime credentials belong only in the deployment `.env`, never in source control.
 
 ### 1.3 Telegram context
 

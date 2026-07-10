@@ -6,6 +6,7 @@ from whatsapp_ai_agent.api.documents import router as documents_router
 from whatsapp_ai_agent.api.health import router as health_router
 from whatsapp_ai_agent.config import Settings, get_settings
 from whatsapp_ai_agent.integrations.telegram.webhook import router as telegram_router
+from whatsapp_ai_agent.integrations.whatsapp_meta.webhook import router as meta_router
 from whatsapp_ai_agent.integrations.whatsapp_twilio.webhook import router as twilio_router
 
 
@@ -17,6 +18,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(dashboard_router)
     app.include_router(documents_router)
     app.include_router(twilio_router, prefix="/webhooks")
+    app.include_router(meta_router, prefix="/webhooks")
     app.include_router(telegram_router, prefix="/webhooks")
 
     @app.get("/", tags=["health"])

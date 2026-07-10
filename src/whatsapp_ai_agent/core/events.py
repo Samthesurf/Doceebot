@@ -39,7 +39,7 @@ class LocationRef(BaseModel):
 class InboundEvent(BaseModel):
     org_id: UUID | None = None
     user_id: UUID | None = None
-    platform: Literal["telegram", "whatsapp_twilio"]
+    platform: Literal["telegram", "whatsapp_twilio", "whatsapp_meta"]
     platform_message_id: str
     platform_user_id: str
     platform_chat_id: str
