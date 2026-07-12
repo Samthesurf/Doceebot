@@ -4,7 +4,7 @@
 
 Doceebot lets a worker send a text, voice note, image, document, or location through a familiar chat channel. The system turns that message into structured work memory, keeps it inside the right organization, and makes it useful later through summaries, reports, document updates, and search.
 
-The goal is not to build another dashboard that nobody opens. The goal is to let the work happen where the worker already is, then give supervisors and teams something more useful than a pile of raw chats.
+The goal is to let the work happen where the worker already is, then give supervisors and teams something more useful than a pile of raw chats.
 
 ## Where the project is now
 
@@ -135,7 +135,7 @@ The backend deploy and the dashboard deploy are separate operations. The dashboa
 
 ## What comes next
 
-The next major step is not another test-token experiment. It is production onboarding with a dedicated Doceebot phone number, a production WABA, approved templates, and a deliberate decision about how Twilio remains in the architecture.
+Production onboarding with a dedicated Doceebot phone number, a production WABA(Whatsapp Business Account), approved templates, and a deliberate decision about how Twilio remains in the architecture.
 
 The other work is the unglamorous part that makes the product trustworthy: stronger tenant onboarding, richer work corrections, supervisor summaries, media validation, and more document workflows.
 
