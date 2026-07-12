@@ -1,60 +1,142 @@
-# WhatsApp AI Agent
+# Doceebot
 
-A FastAPI based work logging assistant for WhatsApp and Telegram. Users send text, voice notes, images, documents, or location pins. The backend normalizes them into dated work memory, then creates summaries, DOCX reports, and XLSX work logs.
+**A chat-first work memory system for people who do real work away from a desk.**
 
-## Current scaffold
+Doceebot lets a worker send a text, voice note, image, document, or location through a familiar chat channel. The system turns that message into structured work memory, keeps it inside the right organization, and makes it useful later through summaries, reports, document updates, and search.
 
-- FastAPI app with `/health`.
-- Twilio WhatsApp webhook adapter at `/webhooks/twilio/whatsapp`.
-- Telegram webhook adapter at `/webhooks/telegram/webhook`.
-- Shared `InboundEvent`, `MediaRef`, and `LocationRef` models.
-- Initial tenant, permission, database, RAG, media, worker, and document generation modules.
-- Unit tests for settings, health, event timestamps, Twilio parsing, and Telegram parsing.
+The goal is not to build another dashboard that nobody opens. The goal is to let the work happen where the worker already is, then give supervisors and teams something more useful than a pile of raw chats.
 
-## Project documents
+## Where the project is now
 
-- Product plan: [`PRODUCT_PLAN.md`](PRODUCT_PLAN.md)
-- Current implementation status: [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md)
-- Local tunnel crash course: [`docs/TUNNELS.md`](docs/TUNNELS.md)
-- Telegram + Cloudflare setup: [`docs/TELEGRAM_CLOUDFLARE_SETUP.md`](docs/TELEGRAM_CLOUDFLARE_SETUP.md)
+This repository has moved beyond the original webhook scaffold.
 
-## Local setup
+- Twilio WhatsApp and Telegram adapters feed a shared inbound-event model.
+- The direct Meta WhatsApp Cloud API adapter has passed a real test-number conversation end to end.
+- Text, voice, image, document, and location messages have channel-specific parsing paths.
+- Tenant and permission checks happen before AI context and retrieval are built.
+- PostgreSQL and Alembic hold durable work records and message audit data.
+- Gemini handles multimodal extraction, while DeepSeek handles structured work reasoning.
+- Cloudflare R2 and AI Search support document storage and organization-scoped retrieval.
+- Deterministic Python generators create DOCX reports and XLSX work logs.
+- The dashboard API and frontend provide an admin view into organizations, documents, logs, escalations, and token usage.
+
+The Meta integration is currently a test-account provider. It sits beside Twilio, not in place of it. Production-number migration is deliberately a separate decision.
+
+## The core loop
+
+```text
+Worker sends a chat message
+        ↓
+Channel adapter normalizes it
+        ↓
+Media is downloaded and extracted when needed
+        ↓
+Tenant and permission scope is resolved
+        ↓
+AI turns the message into structured work data
+        ↓
+PostgreSQL stores the durable record
+        ↓
+Doceebot answers, updates a document, or generates a report
+```
+
+That order matters. The system should know which organization and permissions apply before it builds the prompt or retrieves private context.
+
+## Channels
+
+| Channel | Role in the codebase | Current position |
+| --- | --- | --- |
+| Twilio WhatsApp | Existing WhatsApp provider | Kept as the default adapter |
+| Telegram | Chat and file channel | Separate adapter using the Telegram Bot API |
+| Meta Cloud API | Direct WhatsApp provider | Test-number conversation verified end to end |
+
+The adapters stay separate, then converge on shared `InboundEvent`, media, tenant, workflow, and document interfaces.
+
+## What makes the backend interesting
+
+### A real webhook is not the whole product
+
+The webhook routes are intentionally thin. They authenticate the request, parse the payload, claim the event, acknowledge quickly, and move the slow AI work into a private deferred loop. A slow model call should not block the next webhook or make Meta retry the same message.
+
+### Privacy is part of the workflow
+
+Organization scope and permissions are checked before LLM or RAG context is assembled. Raw worker chats, voice notes, and OCR dumps are not automatically treated as supervisor reports.
+
+### Documents are generated deterministically
+
+The model returns validated structured data. Python code creates the DOCX or XLSX file. This keeps the file format, tables, and formulas under application control rather than asking a model to write arbitrary document code.
+
+### Meta has its own operational traps
+
+The direct Meta path needed more than a token and a webhook URL. The Developer App had to be explicitly subscribed to the correct WABA. The Meta dashboard also sends synthetic webhook-test events that are not the same as a real WhatsApp chat. The complete setup and troubleshooting story is documented in [`docs/META_WHATSAPP_CLOUD_API_RUNBOOK.md`](docs/META_WHATSAPP_CLOUD_API_RUNBOOK.md).
+
+## Repository map
+
+```text
+src/whatsapp_ai_agent/
+├── api/                 Dashboard and document APIs
+├── core/                Shared event and application contracts
+├── db/                  SQLAlchemy models, repositories, and sessions
+├── integrations/        Twilio, Telegram, and direct Meta adapters
+├── llm/                 Gemini, DeepSeek, prompts, schemas, and access filters
+├── media/               Download, storage, image, and audio handling
+├── memory/              Tenant scope, conversation commands, and work memory
+├── rag/                 Cloudflare AI Search and organization metadata
+└── workflows/           Inbound processing and report/document actions
+
+dashboard/               React/Vite admin interface
+alembic/                  Database migrations
+docs/                     Deployment and integration runbooks
+tests/                    Unit and integration-facing checks
+```
+
+## Local development
+
+The backend uses Python 3.11+, `uv`, FastAPI, and PostgreSQL.
 
 ```bash
 uv sync
 cp .env.example .env
-uv run pytest
+uv run alembic upgrade head
+uv run pytest tests/unit -q
+uv run ruff check .
 uv run uvicorn whatsapp_ai_agent.main:app --reload
 ```
 
-Open `http://localhost:8000/health` to confirm the app is running.
+Then open:
 
-## Local services
-
-```bash
-sudo systemctl start postgresql
-uv run alembic upgrade head
+```text
+http://localhost:8000/health
 ```
 
-Docker Compose also defines PostgreSQL and Redis for environments where Docker is available.
-On this Arch workstation, native PostgreSQL is used for local database development.
+PostgreSQL and Redis can be started through Docker Compose when preferred. The local environment also supports native PostgreSQL development.
 
-For the DigitalOcean VPS handoff, see `docs/DIGITALOCEAN_POSTGRES_ALEMBIC.md`.
+## Deployment shape
 
-## Required credentials before live channel testing
+The source checkout is:
 
-- Twilio Account SID.
-- Twilio Auth Token.
-- Twilio WhatsApp sender or Messaging Service SID.
-- A public tunnel URL, for example ngrok, for local Twilio webhooks.
-- Telegram BotFather token.
-- Gemini API key.
-- DeepSeek API key.
-- Cloudflare account details for R2 and managed RAG when production storage is ready.
+```text
+/root/Doceebot
+```
 
-## Architecture reminders
+The live runtime is:
 
-- PostgreSQL is the source of truth for exact work logs and reports.
-- Cloudflare AI Search or AutoRAG is secondary semantic retrieval.
-- Supervisors should receive summaries by default, not raw worker chats, voice notes, or OCR dumps.
-- Twilio needs a public media URL for outbound WhatsApp DOCX or XLSX delivery.
+```text
+/opt/doceebot
+```
+
+Deploy from the source checkout:
+
+```bash
+bash scripts/deploy_update_restart.sh --no-pull --run-tests
+```
+
+The backend deploy and the dashboard deploy are separate operations. The dashboard is deployed with Wrangler from `dashboard/`.
+
+## What comes next
+
+The next major step is not another test-token experiment. It is production onboarding with a dedicated Doceebot phone number, a production WABA, approved templates, and a deliberate decision about how Twilio remains in the architecture.
+
+The other work is the unglamorous part that makes the product trustworthy: stronger tenant onboarding, richer work corrections, supervisor summaries, media validation, and more document workflows.
+
+Doceebot is still evolving, but the direction is clear: chat in, structured organizational memory out.
