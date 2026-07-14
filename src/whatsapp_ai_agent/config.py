@@ -85,6 +85,11 @@ class Settings(BaseSettings):
     location_geocoder_provider: str = "openstreetmap"
     location_ask_when_unclear: bool = True
 
+    reminder_enabled: bool = False
+    reminder_time_hour: int = Field(default=17, ge=0, le=23)
+    reminder_time_minute: int = Field(default=30, ge=0, le=59)
+    reminder_timezone: str = "Africa/Lagos"
+
     @property
     def is_production(self) -> bool:
         return self.app_env == "production"

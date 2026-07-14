@@ -261,6 +261,29 @@ class ManagedDocument(Base):
     )
 
 
+class ReminderState(Base):
+    """A tiny key/value table that lets the daily reminder scheduler stay
+    stateless across process restarts and coordinate across workers.
+
+    ``last_index`` stores the next rotation position into the reminder message
+    list so the copy cycles instead of repeating. ``last_fired_date`` records
+    the local calendar day the reminder last fired, so only one of the
+    (possibly several) uvicorn workers actually delivers it. Both rows are
+    read with ``FOR UPDATE`` so the once-per-day claim is atomic.
+    """
+
+    __tablename__ = "reminder_state"
+    __table_args__ = (UniqueConstraint("name", name="uq_reminder_state_name"),)
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    name: Mapped[str] = mapped_column(String(64), nullable=False)
+    int_value: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    text_value: Mapped[str | None] = mapped_column(Text)
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
 class ManagedDocumentUpdate(Base):
     __tablename__ = "managed_document_updates"
     __table_args__ = (
