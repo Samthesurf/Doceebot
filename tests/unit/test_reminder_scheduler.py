@@ -180,3 +180,32 @@ def test_load_recipients_returns_distinct_active_chats() -> None:
         ("telegram", "111"),
         ("whatsapp_twilio", "whatsapp:+1"),
     ]
+
+
+def test_next_weekday_rolls_weekend_to_monday() -> None:
+    from datetime import datetime
+
+    scheduler = ReminderScheduler(
+        settings=SimpleNamespace(
+            reminder_timezone="UTC",
+            reminder_time_hour=17,
+            reminder_time_minute=30,
+        )
+    )
+
+    # Friday 17:30 -> stays Friday.
+    friday = datetime(2026, 7, 17, 17, 30)  # a Friday
+    assert friday.weekday() == 4
+    assert scheduler._next_weekday(friday) == friday
+
+    # Saturday 17:30 -> Monday 17:30.
+    saturday = datetime(2026, 7, 18, 17, 30)
+    assert saturday.weekday() == 5
+    rolled = scheduler._next_weekday(saturday)
+    assert rolled.weekday() == 0  # Monday
+    assert rolled.date().isoformat() == "2026-07-20"
+
+    # Sunday 17:30 -> Monday 17:30.
+    sunday = datetime(2026, 7, 19, 17, 30)
+    assert sunday.weekday() == 6
+    assert scheduler._next_weekday(sunday).date().isoformat() == "2026-07-20"

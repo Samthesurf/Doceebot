@@ -89,6 +89,7 @@ class Settings(BaseSettings):
     reminder_time_hour: int = Field(default=17, ge=0, le=23)
     reminder_time_minute: int = Field(default=30, ge=0, le=59)
     reminder_timezone: str = "Africa/Lagos"
+    reminder_weekdays_only: bool = True
 
     @property
     def is_production(self) -> bool:

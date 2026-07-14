@@ -14,7 +14,7 @@ from __future__ import annotations
 REMINDER_MESSAGES: tuple[str, ...] = (
     "Wait. What did today actually cost you?",
     "The day's slipping out the back door. Wanna remember it, or write it down while it's warm?",
-    "Quick gut check, what did you move today? Not what you planned. What you actually did.",
+    "Gut check, be real: what actually got done today? Not the plan. The work that happened.",
     "Future-you is about to open this log and judge past-you. Give them something good to read.",
     "If someone asked what you did from sunup to now, could you prove it? Let's make it real.",
     "Okay real talk, the memory is already starting to blur. Catch it.",

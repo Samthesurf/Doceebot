@@ -112,6 +112,8 @@ class ReminderScheduler:
         )
         if fire_time <= now:
             fire_time += timedelta(days=1)
+        if self.settings.reminder_weekdays_only:
+            fire_time = self._next_weekday(fire_time)
         wait = (fire_time - now).total_seconds()
         logger.info(
             "next work-log reminder in %.0fs (at %s %s)",
@@ -123,6 +125,19 @@ class ReminderScheduler:
             step = min(wait, _POLL_STEP_SECONDS)
             await asyncio.sleep(step)
             wait -= step
+
+    @staticmethod
+    def _next_weekday(candidate: datetime) -> datetime:
+        """Roll ``candidate`` forward to the next Monday through Friday.
+
+        ``datetime.weekday()`` returns 5 for Saturday and 6 for Sunday, so any
+        value at or above 5 is pushed to the following weekday. At most three
+        days of roll-forward are ever needed (Sat -> Mon).
+        """
+
+        while candidate.weekday() >= 5:
+            candidate += timedelta(days=1)
+        return candidate
 
     async def _dispatch(self) -> None:
         index = self._claim_dispatch()
