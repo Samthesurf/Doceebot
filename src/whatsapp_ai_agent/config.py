@@ -91,6 +91,11 @@ class Settings(BaseSettings):
     reminder_timezone: str = "Africa/Lagos"
     reminder_weekdays_only: bool = True
 
+    weekly_report_enabled: bool = False
+    weekly_report_time_hour: int = Field(default=17, ge=0, le=23)
+    weekly_report_time_minute: int = Field(default=0, ge=0, le=59)
+    weekly_report_timezone: str = "Africa/Lagos"
+
     @property
     def is_production(self) -> bool:
         return self.app_env == "production"

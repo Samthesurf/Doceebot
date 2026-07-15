@@ -48,6 +48,37 @@ async def test_meta_sender_posts_graph_text_message_with_bearer_token():
 
 
 @pytest.mark.asyncio
+async def test_meta_sender_posts_graph_document_message():
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json={"messages": [{"id": "wamid.document-1"}]})
+
+    settings = Settings(
+        meta_graph_api_base_url="https://graph.example.test",
+        meta_graph_api_version="v23.0",
+        meta_phone_number_id="1234567890123456",
+        meta_access_token="meta-access-token",
+        _env_file=None,
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        message_id = await MetaWhatsAppSender(settings=settings, http_client=client).send_document(
+            to="+2348012345678",
+            body="Weekly report",
+            filename="weekly-report.docx",
+            document_url="https://files.example.test/report.docx",
+        )
+
+    assert message_id == "wamid.document-1"
+    assert len(requests) == 1
+    payload = json.loads(requests[0].content)
+    assert payload["type"] == "document"
+    assert payload["document"]["link"] == "https://files.example.test/report.docx"
+    assert payload["document"]["filename"] == "weekly-report.docx"
+
+
+@pytest.mark.asyncio
 async def test_meta_sender_surfaces_safe_graph_error_details_without_access_token():
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(

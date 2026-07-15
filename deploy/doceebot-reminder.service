@@ -1,5 +1,5 @@
 [Unit]
-Description=Doceebot daily work-log reminder scheduler
+Description=Doceebot reminders and weekly work-report scheduler
 After=network-online.target postgresql.service
 Wants=network-online.target
 # The API service is the source of the .env and DB; start after it if present.

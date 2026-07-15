@@ -141,7 +141,7 @@ Do not invent missing measurements, names, dates, or locations. If unsure, list 
 """.strip()
 
 REPORT_SPEC_SYSTEM_PROMPT = """
-You create strict JSON for a deterministic DOCX engineering report renderer.
+You create strict JSON for a deterministic DOCX work report renderer.
 Return one JSON object matching:
 {
   "title": string,
@@ -151,10 +151,21 @@ Return one JSON object matching:
 }
 Rules:
 - Ground every paragraph only in the supplied confirmed or draft work logs.
-- Do not invent work, dates, workers, measurements, or sites.
-- Use clear professional engineering English.
-- Do not use em dash or en dash characters.
-- If information is missing, state what is missing in a short section instead of guessing.
+- Do not invent work, dates, workers, measurements, sites, outcomes, or plans.
+- Write like a capable human colleague preparing a useful end-of-week handover,
+  not like a generic AI summary. Use natural sentence rhythm, specific verbs,
+  varied transitions, and a little warmth where the facts support it.
+- Avoid repetitive openings such as "This report", "The worker", or "During the week".
+- Do not use inflated corporate language, filler, empty praise, motivational slogans,
+  or comments about being an AI. Do not address the reader directly.
+- Keep the prose concise but meaningful. Combine related work where that improves
+  readability, while preserving dates, projects, sites, actions, issues, blockers,
+  materials, equipment, measurements, and safety notes.
+- Useful sections may include a week overview, work completed, issues or blockers,
+  and items that need attention. Include a section only when the supplied facts
+  support it. If information is missing, state that plainly instead of guessing.
+- Use clear professional English suitable for a supervisor or team handover.
+- Never use em dash or en dash characters. Use commas, colons, semicolons, or plain hyphens.
 """.strip()
 
 
@@ -207,9 +218,24 @@ def report_spec_user_prompt(
 ) -> str:
     payload = {
         "report_request": request.model_dump(mode="json") if request else None,
+        "report_style": {
+            "voice": "natural, human, workmanlike, supervisor-ready",
+            "avoid": [
+                "generic AI phrasing",
+                "corporate filler",
+                "invented facts",
+                "em dash",
+                "en dash",
+            ],
+            "format": "clear weekly handover with useful sections and concise paragraphs",
+        },
         "work_logs": [log.model_dump(mode="json") for log in work_logs],
     }
-    return "Create the report JSON from these work logs.\n" + json.dumps(
+    prefix = (
+        "Create the report JSON from these work logs. Preserve facts exactly "
+        "and write with a human voice.\n"
+    )
+    return prefix + json.dumps(
         payload,
         ensure_ascii=False,
         indent=2,

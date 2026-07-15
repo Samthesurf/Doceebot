@@ -92,3 +92,51 @@ class MetaWhatsAppSender:
         if not message_id:
             raise RuntimeError("Meta send response did not include a message id")
         return str(message_id)
+
+    async def send_document(
+        self, *, to: str, body: str, filename: str, document_url: str
+    ) -> str:
+        """Send a public DOCX URL as a WhatsApp document attachment."""
+
+        phone_number_id = self.settings.meta_phone_number_id
+        if not phone_number_id:
+            raise RuntimeError("META_PHONE_NUMBER_ID is not configured")
+        recipient = "".join(char for char in str(to) if char.isdigit())
+        if not recipient:
+            raise ValueError("Meta WhatsApp recipient must contain a phone number")
+
+        owns_client = self.http_client is None
+        client = self.http_client or httpx.AsyncClient(timeout=30.0)
+        try:
+            response = await client.post(
+                meta_graph_api_url(self.settings, phone_number_id, "messages"),
+                headers={
+                    **meta_auth_headers(self.settings),
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "messaging_product": "whatsapp",
+                    "recipient_type": "individual",
+                    "to": recipient,
+                    "type": "document",
+                    "document": {
+                        "link": document_url,
+                        "caption": body,
+                        "filename": filename,
+                    },
+                },
+            )
+            if response.is_error:
+                raise MetaGraphApiError(_safe_graph_error_message(response))
+            payload: dict[str, Any] = response.json()
+        finally:
+            if owns_client:
+                await client.aclose()
+
+        messages = payload.get("messages")
+        if not isinstance(messages, list) or not messages:
+            raise RuntimeError("Meta document response did not include messages")
+        message_id = messages[0].get("id") if isinstance(messages[0], dict) else None
+        if not message_id:
+            raise RuntimeError("Meta document response did not include a message id")
+        return str(message_id)

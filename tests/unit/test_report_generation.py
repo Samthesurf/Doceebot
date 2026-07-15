@@ -6,6 +6,7 @@ from openpyxl import load_workbook
 
 from whatsapp_ai_agent.config import Settings
 from whatsapp_ai_agent.documents.reports import deterministic_report_spec, generate_report_files
+from whatsapp_ai_agent.llm.prompts import report_spec_user_prompt
 from whatsapp_ai_agent.llm.schemas import ReportRequest, WorkLogDraft
 
 
@@ -71,6 +72,36 @@ async def test_generate_report_files_creates_docx_and_xlsx_without_storage(tmp_p
     assert rows[0] == ("Date", "Worker", "Project", "Summary")
     assert rows[1][0] == "2026-07-01"
     assert rows[1][2] == "Lekki inverter room"
+
+
+def test_report_prompt_requests_humanized_weekly_voice():
+    prompt = report_spec_user_prompt(
+        sample_logs(),
+        ReportRequest(report_type="weekly", output_format="docx"),
+    )
+
+    assert "natural, human, workmanlike" in prompt
+    assert "generic AI phrasing" in prompt
+    assert "em dash" in prompt
+
+
+@pytest.mark.asyncio
+async def test_generated_report_uses_twelve_point_times_new_roman(tmp_path):
+    files = await generate_report_files(
+        org_id="org-1",
+        work_logs=sample_logs(),
+        output_dir=tmp_path,
+        request=ReportRequest(report_type="weekly", output_format="docx"),
+        store=False,
+        use_llm=False,
+    )
+    document = Document(str(files[0].path))
+    runs = [run for paragraph in document.paragraphs for run in paragraph.runs]
+
+    assert runs
+    assert all(run.font.name == "Times New Roman" for run in runs)
+    assert all(run.font.size is not None and run.font.size.pt == 12 for run in runs)
+    assert all(run.font.color is not None and run.font.color.rgb == (0, 0, 0) for run in runs)
 
 
 @pytest.mark.asyncio

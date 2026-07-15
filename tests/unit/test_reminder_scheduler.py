@@ -11,7 +11,9 @@ from whatsapp_ai_agent.db.models import ConversationSession, ReminderState
 from whatsapp_ai_agent.notifications import reminder_messages
 from whatsapp_ai_agent.notifications.reminder_scheduler import (
     ReminderScheduler,
+    WeeklyReportScheduler,
     compute_next_fire,
+    compute_next_weekly_fire,
 )
 
 
@@ -274,3 +276,31 @@ def test_run_forever_exits_on_interrupt(monkeypatch) -> None:
     except KeyboardInterrupt:
         pass
     assert sleeps
+
+
+def test_compute_next_weekly_fire_targets_friday_at_five() -> None:
+    from zoneinfo import ZoneInfo
+
+    tz = ZoneInfo("Africa/Lagos")
+    wednesday = datetime(2026, 7, 15, 12, 0, tzinfo=tz)
+    assert compute_next_weekly_fire(wednesday, 17, 0) == datetime(
+        2026, 7, 17, 17, 0, tzinfo=tz
+    )
+
+    friday_before = datetime(2026, 7, 17, 16, 59, tzinfo=tz)
+    assert compute_next_weekly_fire(friday_before, 17, 0).date().isoformat() == "2026-07-17"
+
+    friday_after = datetime(2026, 7, 17, 17, 1, tzinfo=tz)
+    assert compute_next_weekly_fire(friday_after, 17, 0).date().isoformat() == "2026-07-24"
+
+
+def test_weekly_scheduler_uses_configured_friday_time() -> None:
+    settings = SimpleNamespace(
+        weekly_report_timezone="UTC",
+        weekly_report_time_hour=17,
+        weekly_report_time_minute=0,
+    )
+    scheduler = WeeklyReportScheduler(settings=settings)
+    assert scheduler._hour == 17
+    assert scheduler._minute == 0
+    assert scheduler._tz is not None
