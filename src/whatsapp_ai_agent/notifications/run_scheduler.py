@@ -22,7 +22,10 @@ def main() -> int:
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
-    run_enabled_schedulers_forever()
+    try:
+        run_enabled_schedulers_forever()
+    except KeyboardInterrupt:
+        logging.getLogger(__name__).info("recurring jobs scheduler stopped")
     return 0
 
 
