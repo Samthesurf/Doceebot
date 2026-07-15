@@ -17,6 +17,7 @@ set -Eeuo pipefail
 SOURCE_DIR="${SOURCE_DIR:-/root/Doceebot}"
 APP_DIR="${APP_DIR:-/opt/doceebot}"
 SERVICE_NAME="${SERVICE_NAME:-doceebot}"
+REMINDER_SERVICE_NAME="${REMINDER_SERVICE_NAME:-doceebot-reminder}"
 APP_USER="${APP_USER:-doceebot}"
 if [[ -n "${APP_GROUP:-}" ]]; then
     APP_GROUP_EXPLICIT=true
@@ -302,6 +303,19 @@ restart_service() {
     run systemctl is-active --quiet "$SERVICE_NAME"
 }
 
+install_reminder_service() {
+    # The daily reminder scheduler runs as its own systemd unit, decoupled
+    # from the API workers. Install (idempotent) and restart + enable it.
+    local src="$SOURCE_DIR/deploy/$REMINDER_SERVICE_NAME.service"
+    [[ -f "$src" ]] || { warn "reminder unit not found at $src; skipping"; return; }
+    log "Installing $REMINDER_SERVICE_NAME systemd unit"
+    run install -m 0644 "$src" "/etc/systemd/system/$REMINDER_SERVICE_NAME.service"
+    run systemctl daemon-reload
+    run systemctl enable "$REMINDER_SERVICE_NAME"
+    run systemctl restart "$REMINDER_SERVICE_NAME"
+    run systemctl is-active --quiet "$REMINDER_SERVICE_NAME"
+}
+
 wait_for_health() {
     local url="$1"
     local label="$2"
@@ -332,6 +346,7 @@ wait_for_health() {
 show_status() {
     log "Service status"
     run systemctl show "$SERVICE_NAME" -p MainPID -p ActiveState -p SubState --no-pager
+    run systemctl show "$REMINDER_SERVICE_NAME" -p ActiveState -p SubState --no-pager
     if [[ "$DRY_RUN" == false ]]; then
         printf 'Deployed source state: '
         source_git_state | tail -n 1
@@ -354,6 +369,7 @@ main() {
     run_migrations
     write_deploy_marker
     restart_service
+    install_reminder_service
     wait_for_health "$HEALTH_URL" "local" "$HEALTH_TIMEOUT_SECONDS"
     if [[ "$SKIP_PUBLIC_HEALTH" == false && -n "$PUBLIC_HEALTH_URL" ]]; then
         wait_for_health "$PUBLIC_HEALTH_URL" "public" "$HEALTH_TIMEOUT_SECONDS"

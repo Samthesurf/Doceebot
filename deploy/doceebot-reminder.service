@@ -1,0 +1,28 @@
+[Unit]
+Description=Doceebot daily work-log reminder scheduler
+After=network-online.target postgresql.service
+Wants=network-online.target
+# The API service is the source of the .env and DB; start after it if present.
+After=doceebot.service
+Wants=doceebot.service
+
+[Service]
+Type=simple
+User=doceebot
+Group=doceebot
+WorkingDirectory=/opt/doceebot
+EnvironmentFile=/opt/doceebot/.env
+ExecStart=/opt/doceebot/.venv/bin/python -m whatsapp_ai_agent.notifications.run_scheduler
+# When reminders are disabled the entry point exits 0; only restart on crash.
+Restart=on-failure
+RestartSec=10
+KillSignal=SIGINT
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+ReadWritePaths=/opt/doceebot/storage
+
+[Install]
+WantedBy=multi-user.target

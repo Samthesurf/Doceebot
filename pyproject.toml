@@ -37,6 +37,7 @@ dev = [
 
 [project.scripts]
 whatsapp-ai-agent = "whatsapp_ai_agent.main:run"
+doceebot-reminder = "whatsapp_ai_agent.notifications.run_scheduler:main"
 
 [build-system]
 requires = ["setuptools>=68"]

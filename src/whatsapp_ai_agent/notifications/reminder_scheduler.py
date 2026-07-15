@@ -1,24 +1,27 @@
 """Daily work-log reminder scheduler for Doceebot.
 
 Doceebot runs as a plain FastAPI service (no Celery worker or beat is
-deployed), so this module ships a self contained daily loop. A single daemon
-thread owns its own asyncio event loop and sleeps until the configured local
-fire time, then broadcasts one reminder message to every active conversation
-recipient. The message is rotated through :data:`REMINDER_MESSAGES` so the
-daily ping never goes stale.
+deployed). Rather than coupling the reminder loop to the API workers, the
+scheduler runs as its own dedicated systemd service
+(``doceebot-reminder.service``) that launches
+``python -m whatsapp_ai_agent.notifications.run_scheduler``. That keeps the
+broadcast independent of API restarts and avoids the multi worker duplication
+problem entirely: there is exactly one scheduler process.
 
-Concurrency: the FastAPI service runs with multiple uvicorn workers, and each
-worker starts its own scheduler thread via the app lifespan. To avoid every
-worker delivering the same message, the dispatch claims the day under a
-database row lock (``reminder_state.last_fired_date``), so only the first
-worker to commit actually sends.
+The loop sleeps until the configured local fire time, then broadcasts one
+reminder message to every active conversation recipient. The message is
+rotated through ``REMINDER_MESSAGES`` so the daily ping never goes stale.
+
+The rotation index is persisted in the ``reminder_state`` table and the daily
+dispatch is claimed under a database row lock (``last_fired_date``), so even
+if the process is restarted it will never send twice on the same calendar day.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-import threading
+import time
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
@@ -36,21 +39,50 @@ logger = logging.getLogger(__name__)
 _STATE_LAST_INDEX = "last_index"
 _STATE_LAST_FIRED_DATE = "last_fired_date"
 
-# Refresh the typing style loop in small steps so stop() is responsive even
-# when the next fire is many hours away.
+# Refresh the sleep loop in small steps so a stopped process exits promptly
+# even when the next fire is many hours away.
 _POLL_STEP_SECONDS = 30.0
 
 
+def compute_next_fire(
+    now: datetime, hour: int, minute: int, weekdays_only: bool
+) -> datetime:
+    """Return the next local fire time at ``hour:minute``.
+
+    If that time has already passed today, roll forward a day. When
+    ``weekdays_only`` is set, weekend fire times roll forward to the following
+    Monday.
+    """
+
+    fire = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if fire <= now:
+        fire += timedelta(days=1)
+    if weekdays_only:
+        fire = _roll_to_weekday(fire)
+    return fire
+
+
+def _roll_to_weekday(candidate: datetime) -> datetime:
+    """Roll ``candidate`` forward to the next Monday through Friday.
+
+    ``datetime.weekday()`` returns 5 for Saturday and 6 for Sunday, so any
+    value at or above 5 is pushed to the following weekday. At most three days
+    of roll-forward are ever needed (Sat -> Mon).
+    """
+
+    while candidate.weekday() >= 5:
+        candidate += timedelta(days=1)
+    return candidate
+
+
 class ReminderScheduler:
-    """Runs the once daily reminder broadcast in a dedicated thread."""
+    """Runs the once daily reminder broadcast."""
 
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
         self._tz = self._resolve_timezone(self.settings.reminder_timezone)
         self._hour = self.settings.reminder_time_hour
         self._minute = self.settings.reminder_time_minute
-        self._stop = threading.Event()
-        self._thread: threading.Thread | None = None
 
     @staticmethod
     def _resolve_timezone(name: str):
@@ -62,58 +94,33 @@ class ReminderScheduler:
             logger.warning("unknown reminder timezone %r; using UTC", name)
             return UTC
 
-    def start(self) -> None:
-        """Spawn the scheduler thread. Idempotent."""
+    def run_forever(self) -> None:
+        """Blocking entry point for the dedicated systemd service."""
 
-        if self._thread is not None and self._thread.is_alive():
-            return
-        self._stop.clear()
-        self._thread = threading.Thread(
-            target=self._run, name="reminder-scheduler", daemon=True
-        )
-        self._thread.start()
         logger.info(
-            "reminder scheduler started (fires daily at %02d:%02d %s)",
+            "reminder scheduler started (fires daily at %02d:%02d %s, "
+            "weekdays_only=%s)",
             self._hour,
             self._minute,
             self.settings.reminder_timezone,
+            self.settings.reminder_weekdays_only,
         )
-
-    def stop(self) -> None:
-        self._stop.set()
-
-    def _run(self) -> None:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            loop.run_until_complete(self._run_async())
-        except Exception:  # noqa: BLE001 - a dead scheduler thread must not crash the app
-            logger.exception("reminder scheduler thread exited unexpectedly")
-        finally:
-            loop.close()
-
-    async def _run_async(self) -> None:
-        while not self._stop.is_set():
+        while True:
             try:
-                await self._sleep_until_next_fire()
-                if self._stop.is_set():
-                    break
-                await self._dispatch()
-            except asyncio.CancelledError:
-                break
+                self._sleep_until_next_fire()
+                self._dispatch()
             except Exception:  # noqa: BLE001 - never tight-loop on a bad tick
-                logger.exception("reminder scheduler tick failed")
-                await asyncio.sleep(_POLL_STEP_SECONDS)
+                logger.exception(
+                    "reminder scheduler tick failed; rescheduling in %.0fs",
+                    _POLL_STEP_SECONDS,
+                )
+                time.sleep(_POLL_STEP_SECONDS)
 
-    async def _sleep_until_next_fire(self) -> None:
+    def _sleep_until_next_fire(self) -> None:
         now = datetime.now(self._tz)
-        fire_time = now.replace(
-            hour=self._hour, minute=self._minute, second=0, microsecond=0
+        fire_time = compute_next_fire(
+            now, self._hour, self._minute, self.settings.reminder_weekdays_only
         )
-        if fire_time <= now:
-            fire_time += timedelta(days=1)
-        if self.settings.reminder_weekdays_only:
-            fire_time = self._next_weekday(fire_time)
         wait = (fire_time - now).total_seconds()
         logger.info(
             "next work-log reminder in %.0fs (at %s %s)",
@@ -121,28 +128,15 @@ class ReminderScheduler:
             fire_time.strftime("%Y-%m-%d %H:%M"),
             self.settings.reminder_timezone,
         )
-        while wait > 0 and not self._stop.is_set():
+        while wait > 0:
             step = min(wait, _POLL_STEP_SECONDS)
-            await asyncio.sleep(step)
+            time.sleep(step)
             wait -= step
 
-    @staticmethod
-    def _next_weekday(candidate: datetime) -> datetime:
-        """Roll ``candidate`` forward to the next Monday through Friday.
-
-        ``datetime.weekday()`` returns 5 for Saturday and 6 for Sunday, so any
-        value at or above 5 is pushed to the following weekday. At most three
-        days of roll-forward are ever needed (Sat -> Mon).
-        """
-
-        while candidate.weekday() >= 5:
-            candidate += timedelta(days=1)
-        return candidate
-
-    async def _dispatch(self) -> None:
+    def _dispatch(self) -> None:
         index = self._claim_dispatch()
         if index is None:
-            # Another worker already fired today.
+            # Already fired today (or a restart landed after the lock was set).
             return
 
         settings = get_settings()
@@ -153,11 +147,13 @@ class ReminderScheduler:
 
         message = reminder_at(index)
         logger.info(
-            "sending work-log reminder #%d to %d recipient(s)", index, len(recipients)
+            "sending work-log reminder #%d to %d recipient(s)",
+            index,
+            len(recipients),
         )
         for platform, chat_id in recipients:
             try:
-                await self._send_one(settings, platform, chat_id, message)
+                self._send_one_sync(settings, platform, chat_id, message)
             except Exception:  # noqa: BLE001 - one bad recipient must not stop the rest
                 logger.warning(
                     "failed to send reminder to %s chat %s",
@@ -169,7 +165,7 @@ class ReminderScheduler:
     def _claim_dispatch(self) -> int | None:
         """Atomically claim today's dispatch and return the rotation index.
 
-        Returns ``None`` if another worker already fired today.
+        Returns ``None`` if another run already fired today.
         """
 
         factory = get_session_factory(self.settings)
@@ -232,18 +228,18 @@ class ReminderScheduler:
             )
         return [(row.platform, row.platform_chat_id) for row in rows]
 
-    async def _send_one(
+    def _send_one_sync(
         self, settings: Settings, platform: str, chat_id: str, message: str
     ) -> None:
         if platform == "telegram":
             sender = TelegramSender(settings=settings)
-            await sender.send_text(chat_id=chat_id, text=message)
+            asyncio.run(sender.send_text(chat_id=chat_id, text=message))
         elif platform == "whatsapp_twilio":
             sender = TwilioWhatsAppSender(settings=settings)
             sender.send_text(to=self._format_twilio_to(chat_id), body=message)
         elif platform == "whatsapp_meta":
             sender = MetaWhatsAppSender(settings=settings)
-            await sender.send_text(to=chat_id, body=message)
+            asyncio.run(sender.send_text(to=chat_id, body=message))
         else:
             logger.warning("skipping reminder for unknown platform %r", platform)
 
@@ -252,18 +248,16 @@ class ReminderScheduler:
         return chat_id if chat_id.startswith("whatsapp:") else f"whatsapp:{chat_id}"
 
 
-def start_reminder_scheduler() -> ReminderScheduler | None:
-    """Start the reminder scheduler if enabled, else return ``None``.
+def run_reminder_scheduler() -> ReminderScheduler | None:
+    """Build the scheduler if enabled, else return ``None``.
 
-    Safe to call from the FastAPI lifespan: when reminders are disabled it
-    does nothing, and a missing configuration raises nothing here so the app
-    boots normally.
+    Used by the dedicated service entry point: when reminders are disabled the
+    process simply exits (and systemd's ``Restart=on-failure`` leaves it
+    stopped rather than looping).
     """
 
     settings = get_settings()
     if not settings.reminder_enabled:
         logger.info("daily work-log reminder disabled (REMINDER_ENABLED is not true)")
         return None
-    scheduler = ReminderScheduler(settings=settings)
-    scheduler.start()
-    return scheduler
+    return ReminderScheduler(settings=settings)

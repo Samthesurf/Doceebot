@@ -1,13 +1,18 @@
-"""Tests for the daily work-log reminder scheduler."""
+"""Tests for the daily work-log reminder scheduler (standalone service)."""
 
 from __future__ import annotations
 
+import time
+from datetime import datetime
 from types import SimpleNamespace
 from typing import Any
 
 from whatsapp_ai_agent.db.models import ConversationSession, ReminderState
 from whatsapp_ai_agent.notifications import reminder_messages
-from whatsapp_ai_agent.notifications.reminder_scheduler import ReminderScheduler
+from whatsapp_ai_agent.notifications.reminder_scheduler import (
+    ReminderScheduler,
+    compute_next_fire,
+)
 
 
 def test_twenty_messages_configured() -> None:
@@ -24,12 +29,48 @@ def test_reminder_rotation_wraps() -> None:
 
 def test_format_twilio_to_preserves_prefix() -> None:
     assert (
-        ReminderScheduler._format_twilio_to("whatsapp:+2348012345678")
-        == "whatsapp:+2348012345678"
+        ReminderScheduler._format_twilio_to("whatsapp:+234****5678")
+        == "whatsapp:+234****5678"
     )
     assert (
-        ReminderScheduler._format_twilio_to("+2348012345678") == "whatsapp:+2348012345678"
+        ReminderScheduler._format_twilio_to("+234****5678") == "whatsapp:+234****5678"
     )
+
+
+def test_compute_next_fire_rolls_to_tomorrow_after_time_passed() -> None:
+    from zoneinfo import ZoneInfo
+
+    tz = ZoneInfo("Africa/Lagos")
+    now = datetime(2026, 7, 15, 18, 0, tzinfo=tz)
+    fire = compute_next_fire(now, 17, 30, weekdays_only=False)
+    assert fire.date().isoformat() == "2026-07-16"
+    assert (fire.hour, fire.minute) == (17, 30)
+
+
+def test_compute_next_fire_rolls_weekend_to_monday() -> None:
+    from zoneinfo import ZoneInfo
+
+    tz = ZoneInfo("Africa/Lagos")
+    sat = datetime(2026, 7, 18, 17, 30, tzinfo=tz)
+    assert sat.weekday() == 5
+    fire = compute_next_fire(sat, 17, 30, weekdays_only=True)
+    assert fire.weekday() == 0
+    assert fire.date().isoformat() == "2026-07-20"
+
+    sun = datetime(2026, 7, 19, 17, 30, tzinfo=tz)
+    assert sun.weekday() == 6
+    assert compute_next_fire(sun, 17, 30, weekdays_only=True).date().isoformat() == "2026-07-20"
+
+    fri = datetime(2026, 7, 17, 10, 0, tzinfo=tz)
+    assert fri.weekday() == 4
+    assert compute_next_fire(fri, 17, 30, weekdays_only=True) == datetime(
+        2026, 7, 17, 17, 30, tzinfo=tz
+    )
+
+    # Friday 18:00 (after the fire time) -> rolls forward to Monday.
+    fri_late = datetime(2026, 7, 17, 18, 0, tzinfo=tz)
+    next_fire = compute_next_fire(fri_late, 17, 30, weekdays_only=True)
+    assert next_fire.date().isoformat() == "2026-07-20"
 
 
 class _FakeSession:
@@ -40,12 +81,9 @@ class _FakeSession:
         self.committed = False
         self.added: list[Any] = []
 
-    def execute(self, stmt):  # noqa: ANN001 - only needs to satisfy .scalars().all()
+    def execute(self, stmt):  # noqa: ANN001
         rows = list(self._rows.values())
-        result = SimpleNamespace(
-            scalars=lambda: SimpleNamespace(all=lambda: rows)
-        )
-        return result
+        return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: rows))
 
     def add(self, obj: Any) -> None:
         self.added.append(obj)
@@ -86,22 +124,18 @@ def test_claim_returns_rotating_index_and_locks_day() -> None:
     scheduler.settings = settings  # type: ignore[attr-defined]
     import whatsapp_ai_agent.notifications.reminder_scheduler as mod
 
-    # Patch the session factory used inside the claim.
     original = mod.get_session_factory
     mod.get_session_factory = _FakeFactory(session)  # type: ignore[assignment]
     try:
-        # First claim of the day: index 0, marks today fired.
         idx1 = scheduler._claim_dispatch()
         assert idx1 == 0
         assert session.committed is True
         fired = session._rows[mod._STATE_LAST_FIRED_DATE]
         assert fired.text_value is not None
 
-        # A second claim the same day must be suppressed (returns None).
         idx2 = scheduler._claim_dispatch()
         assert idx2 is None
 
-        # Simulate next day by clearing the fired date, index should advance.
         session._rows[mod._STATE_LAST_FIRED_DATE].text_value = "2000-01-01"
         idx3 = scheduler._claim_dispatch()
         assert idx3 == 1
@@ -115,23 +149,13 @@ def test_load_recipients_returns_distinct_active_chats() -> None:
         reminder_time_hour=17,
         reminder_time_minute=30,
     )
-    session = _FakeSession()
-    # Two distinct active chats plus a duplicate (same platform+chat) and a
-    # closed session that must be excluded.
-    session.added = []
     rows = [
-        ConversationSession(
-            platform="telegram", platform_chat_id="111", status="active"
-        ),
-        ConversationSession(
-            platform="telegram", platform_chat_id="111", status="active"
-        ),
+        ConversationSession(platform="telegram", platform_chat_id="111", status="active"),
+        ConversationSession(platform="telegram", platform_chat_id="111", status="active"),
         ConversationSession(
             platform="whatsapp_twilio", platform_chat_id="whatsapp:+1", status="active"
         ),
-        ConversationSession(
-            platform="telegram", platform_chat_id="222", status="closed"
-        ),
+        ConversationSession(platform="telegram", platform_chat_id="222", status="closed"),
     ]
     scheduler = ReminderScheduler(settings=settings)
     import whatsapp_ai_agent.notifications.reminder_scheduler as mod
@@ -182,30 +206,71 @@ def test_load_recipients_returns_distinct_active_chats() -> None:
     ]
 
 
-def test_next_weekday_rolls_weekend_to_monday() -> None:
-    from datetime import datetime
-
-    scheduler = ReminderScheduler(
-        settings=SimpleNamespace(
-            reminder_timezone="UTC",
-            reminder_time_hour=17,
-            reminder_time_minute=30,
-        )
+def test_dispatch_sends_rotated_message_once_per_day() -> None:
+    settings = SimpleNamespace(
+        reminder_timezone="UTC",
+        reminder_time_hour=17,
+        reminder_time_minute=30,
     )
+    sent: list[tuple[str, str, str]] = []
 
-    # Friday 17:30 -> stays Friday.
-    friday = datetime(2026, 7, 17, 17, 30)  # a Friday
-    assert friday.weekday() == 4
-    assert scheduler._next_weekday(friday) == friday
+    scheduler = ReminderScheduler(settings=settings)
+    scheduler.settings = settings  # type: ignore[attr-defined]
 
-    # Saturday 17:30 -> Monday 17:30.
-    saturday = datetime(2026, 7, 18, 17, 30)
-    assert saturday.weekday() == 5
-    rolled = scheduler._next_weekday(saturday)
-    assert rolled.weekday() == 0  # Monday
-    assert rolled.date().isoformat() == "2026-07-20"
+    # Claim the day once (index 0), then simulate "already fired today".
+    state = {"claimed": False}
 
-    # Sunday 17:30 -> Monday 17:30.
-    sunday = datetime(2026, 7, 19, 17, 30)
-    assert sunday.weekday() == 6
-    assert scheduler._next_weekday(sunday).date().isoformat() == "2026-07-20"
+    def fake_claim() -> int | None:
+        if state["claimed"]:
+            return None
+        state["claimed"] = True
+        return 0
+
+    def fake_recipients(s: object) -> list[tuple[str, str]]:
+        return [("telegram", "111"), ("whatsapp_twilio", "whatsapp:+1")]
+
+    def fake_send(s, platform, chat_id, message):  # noqa: ANN001
+        sent.append((platform, chat_id, message))
+
+    scheduler._claim_dispatch = fake_claim  # type: ignore[assignment]
+    scheduler._load_recipients = fake_recipients  # type: ignore[assignment]
+    scheduler._send_one_sync = fake_send  # type: ignore[assignment]
+
+    scheduler._dispatch()
+    scheduler._dispatch()  # second call same day must be suppressed
+
+    # Day 1: both recipients get the (single, rotated) message once each.
+    assert len(sent) == 2
+    # Day 2 (would be a re-run): suppressed, no extra sends.
+    assert all(
+        m == reminder_messages.REMINDER_MESSAGES[0] for _, _, m in sent
+    )
+    platforms = {(p, c) for p, c, _ in sent}
+    assert platforms == {("telegram", "111"), ("whatsapp_twilio", "whatsapp:+1")}
+
+
+def test_run_forever_exits_on_interrupt(monkeypatch) -> None:
+    settings = SimpleNamespace(
+        reminder_timezone="UTC",
+        reminder_time_hour=17,
+        reminder_time_minute=30,
+        reminder_weekdays_only=True,
+    )
+    scheduler = ReminderScheduler(settings=settings)
+
+    sleeps: list[float] = []
+
+    def fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(time, "sleep", fake_sleep)
+    # Let _sleep_until_next_fire run for real so it calls time.sleep (which we
+    # patched to abort the loop), and stub the delivery so nothing is sent.
+    monkeypatch.setattr(scheduler, "_dispatch", lambda: None)
+
+    try:
+        scheduler.run_forever()
+    except KeyboardInterrupt:
+        pass
+    assert sleeps
