@@ -11,7 +11,7 @@ The goal is to let the work happen where the worker already is, then give superv
 This repository has moved beyond the original webhook scaffold.
 
 - Twilio WhatsApp and Telegram adapters feed a shared inbound-event model.
-- The direct Meta WhatsApp Cloud API adapter has passed a real production-number conversation end to end.
+- The direct Meta WhatsApp Cloud API adapter has passed a real production-number conversation end to end, including read-receipt/typing indicators and Friday DOCX report delivery.
 - Text, voice, image, document, and location messages have channel-specific parsing paths.
 - Tenant and permission checks happen before AI context and retrieval are built.
 - PostgreSQL and Alembic hold durable work records and message audit data.
@@ -48,7 +48,7 @@ That order matters. The system should know which organization and permissions ap
 | --- | --- | --- |
 | Twilio WhatsApp | Existing WhatsApp provider | Kept as the default adapter |
 | Telegram | Chat and file channel | Separate adapter using the Telegram Bot API |
-| Meta Cloud API | Direct WhatsApp provider | Production-number conversation verified end to end (`+234 807 418 6515`) |
+| Meta Cloud API | Direct WhatsApp provider | Production-number conversation verified end to end (`+234 807 418 6515`); typing indicators and Friday DOCX reports delivered |
 
 The adapters stay separate, then converge on shared `InboundEvent`, media, tenant, workflow, and document interfaces.
 
@@ -135,7 +135,7 @@ The backend deploy and the dashboard deploy are separate operations. The dashboa
 
 ## What comes next
 
-The production phone number (`+234 807 418 6515`) and approved WABA are live, with end-to-end inbound and outbound messaging verified. A "session start" template is still pending approval so the bot can proactively reopen a conversation after the 24-hour window closes.
+The production phone number (`+234 807 418 6515`) and approved WABA are live, with end-to-end inbound and outbound messaging verified. Inbound messages trigger a read receipt and typing indicator while the bot thinks, and the Friday weekly DOCX report is delivered to WhatsApp users by uploading the document to Meta (no public CDN required). A "session start" template is still pending approval so the bot can proactively reopen a conversation after the 24-hour window closes.
 
 The other work is the unglamorous part that makes the product trustworthy: stronger tenant onboarding, richer work corrections, supervisor summaries, media validation, and more document workflows.
 
