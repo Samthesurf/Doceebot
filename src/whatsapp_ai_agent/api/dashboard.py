@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from whatsapp_ai_agent.config import Settings, get_settings
 from whatsapp_ai_agent.db.models import Membership, Organization, User
 from whatsapp_ai_agent.db.session import get_db_session
+from whatsapp_ai_agent.db.users_repository import UserMergeError, merge_users
 from whatsapp_ai_agent.memory.session_search import SessionSearcher
 
 router = APIRouter(prefix="/dashboard-api", tags=["dashboard"])
@@ -212,6 +213,26 @@ class AdminEmailLinkResponse(BaseModel):
     created_membership: bool
     updated_membership_role: bool
     updated_membership_email: bool
+
+
+class AdminMergeUsersRequest(BaseModel):
+    org_id: UUID
+    source_user_id: UUID
+    target_user_id: UUID
+    allow_cross_org: bool = False
+
+
+class AdminMergeUsersResponse(BaseModel):
+    target_user_id: UUID
+    source_user_id: UUID
+    work_logs_moved: int
+    conversations_moved: int
+    raw_messages_moved: int
+    escalations_moved: int
+    documents_moved: int
+    memberships_moved: int
+    target_telegram_user_id: str | None
+    target_phone_number: str | None
 
 
 class TokenUsageTotals(BaseModel):
@@ -846,6 +867,71 @@ async def create_dashboard_org_user(
         created_user=created_user,
         created_membership=created_membership,
         updated_membership_role=updated_membership_role,
+    )
+
+
+@router.post(
+    "/admin/merge-users",
+    response_model=AdminMergeUsersResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def merge_dashboard_users(
+    payload: AdminMergeUsersRequest,
+    user: DashboardUser = Depends(require_dashboard_user),
+    db_session: Session = Depends(get_db_session),
+) -> AdminMergeUsersResponse:
+    """Merge one bot user into another, unifying their multi-channel history.
+
+    All work logs, conversations, raw inbound messages, escalations, managed
+    documents and memberships owned by ``source_user_id`` are re-pointed to
+    ``target_user_id``. The source's Telegram id / phone / email are preserved on
+    the target if missing, then the now-empty source row is deleted.
+
+    Cross-organization merges are refused by default because they break automatic
+    bot routing; pass ``allow_cross_org=true`` only when you intend it.
+    """
+    _, _, organization = _require_admin_org(user, db_session, payload.org_id)
+    # The merge must operate within the admin's organization scope.
+    source_member = db_session.scalar(
+        select(Membership).where(
+            Membership.user_id == payload.source_user_id,
+            Membership.org_id == organization.id,
+        )
+    )
+    target_member = db_session.scalar(
+        select(Membership).where(
+            Membership.user_id == payload.target_user_id,
+            Membership.org_id == organization.id,
+        )
+    )
+    if source_member is None or target_member is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Both users must be members of the target organization",
+        )
+    try:
+        result = merge_users(
+            db_session,
+            source_user_id=payload.source_user_id,
+            target_user_id=payload.target_user_id,
+            allow_cross_org=payload.allow_cross_org,
+        )
+    except UserMergeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+    db_session.commit()
+    return AdminMergeUsersResponse(
+        target_user_id=result.target_user_id,
+        source_user_id=result.source_user_id,
+        work_logs_moved=result.work_logs_moved,
+        conversations_moved=result.conversations_moved,
+        raw_messages_moved=result.raw_messages_moved,
+        escalations_moved=result.escalations_moved,
+        documents_moved=result.documents_moved,
+        memberships_moved=result.memberships_moved,
+        target_telegram_user_id=result.target_telegram_user_id,
+        target_phone_number=result.target_phone_number,
     )
 
 

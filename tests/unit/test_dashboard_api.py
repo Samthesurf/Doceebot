@@ -335,3 +335,98 @@ def test_dashboard_admin_can_link_email_to_bot_user(tmp_path):
         },
     )
     assert second.status_code == 409
+
+
+def test_dashboard_admin_can_merge_users_and_unify_history(tmp_path):
+    from sqlalchemy import create_engine as _ce
+    from sqlalchemy.orm import sessionmaker as _sm
+    from sqlalchemy.pool import StaticPool as _SP
+
+    # Build a fresh app with two org members (Telegram-only and WhatsApp-only)
+    # where the Telegram user holds a work log. Merging must move the log and drop
+    # the source user.
+    engine = _ce(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=_SP,
+    )
+    Base.metadata.create_all(engine)
+    Session = _sm(bind=engine, autoflush=False, autocommit=False)
+    settings = Settings(
+        firebase_project_id="doceebot-test",
+        dashboard_allowed_emails="admin@example.com",
+        dashboard_logs_password="correct-horse-battery-staple",
+        local_storage_dir=str(tmp_path),
+        _env_file=None,
+    )
+    org_id = uuid4()
+    src_id = uuid4()
+    tgt_id = uuid4()
+    admin_user_id = uuid4()
+    with Session() as session:
+        session.add(Organization(id=org_id, name="Merge Org"))
+        session.add(
+            User(id=admin_user_id, display_name="Admin User", email="admin@example.com")
+        )
+        session.add(Membership(org_id=org_id, user_id=admin_user_id, role="org_admin"))
+        session.add(
+            User(id=src_id, display_name="TG Only", telegram_user_id="7112233445")
+        )
+        session.add(
+            User(id=tgt_id, display_name="WA Only", phone_number="+155****7777")
+        )
+        session.add(Membership(org_id=org_id, user_id=src_id, role="worker"))
+        session.add(Membership(org_id=org_id, user_id=tgt_id, role="worker"))
+        session.add(
+            WorkLogEntry(
+                org_id=org_id,
+                user_id=src_id,
+                work_date=date(2026, 7, 1),
+                title="Painted the gate",
+                description="d",
+                summary="s",
+            )
+        )
+        session.commit()
+
+    def _override_db():
+        with Session() as session:
+            yield session
+
+    app = create_app(settings)
+    app.dependency_overrides[get_db_session] = _override_db
+    app.dependency_overrides[get_settings] = lambda: settings
+    app.dependency_overrides[require_dashboard_user] = lambda: DashboardUser(
+        uid="test-admin", email="admin@example.com", name="Admin", picture=None
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/dashboard-api/admin/merge-users",
+        json={
+            "org_id": str(org_id),
+            "source_user_id": str(src_id),
+            "target_user_id": str(tgt_id),
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["work_logs_moved"] == 1
+    assert payload["target_user_id"] == str(tgt_id)
+    assert payload["target_telegram_user_id"] == "7112233445"
+    assert payload["target_phone_number"] == "+155****7777"
+
+    # Source user gone; its work log now belongs to the target.
+    with Session() as session:
+        from sqlalchemy import func as _func, select as _select
+
+        assert session.get(User, src_id) is None
+        assert (
+            session.scalar(
+                _select(_func.count(WorkLogEntry.id)).where(
+                    WorkLogEntry.user_id == tgt_id
+                )
+            )
+            == 1
+        )
