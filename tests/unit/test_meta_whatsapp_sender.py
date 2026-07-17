@@ -218,3 +218,90 @@ async def test_meta_sender_typing_indicator_is_best_effort_on_failure():
             to="+234****5678",
             message_id="wamid.HBgLMTY1MDM4Nzk0MzkVAgARGBJDQjZCMzlEQUE4OTJBMTE4RTUA",
         )
+
+
+@pytest.mark.asyncio
+async def test_meta_sender_uploads_media_then_sends_by_id(tmp_path):
+    # send_document_file should POST to /media first (upload), then POST to
+    # /messages with document.id (not a public link), so it works on local storage.
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path.endswith("/media"):
+            return httpx.Response(200, json={"id": "media-abc-123"})
+        return httpx.Response(200, json={"messages": [{"id": "wamid.outbound-doc"}]})
+
+    settings = Settings(
+        meta_graph_api_base_url="https://graph.example.test",
+        meta_graph_api_version="v23.0",
+        meta_phone_number_id="1234567890123456",
+        meta_access_token="meta-access-token",
+        _env_file=None,
+    )
+    doc = tmp_path / "weekly-report.docx"
+    doc.write_bytes(b"PK\x03\x04 fake docx bytes")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        message_id = await MetaWhatsAppSender(
+            settings=settings, http_client=client
+        ).send_document_file(
+            to="+234****5678",
+            body="Your weekly report",
+            filename="weekly-report.docx",
+            document_path=doc,
+        )
+
+    assert message_id == "wamid.outbound-doc"
+    assert len(requests) == 2
+    upload, send = requests
+    assert upload.url.path == "/v23.0/1234567890123456/media"
+    assert send.url.path == "/v23.0/1234567890123456/messages"
+    sent_payload = json.loads(send.content)
+    assert sent_payload["type"] == "document"
+    # Delivered by media id, not a public link.
+    assert sent_payload["document"]["id"] == "media-abc-123"
+    assert "link" not in sent_payload["document"]
+
+
+@pytest.mark.asyncio
+async def test_meta_sender_send_document_uses_public_link_when_provided():
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json={"messages": [{"id": "wamid.link-doc"}]})
+
+    settings = Settings(
+        meta_graph_api_base_url="https://graph.example.test",
+        meta_graph_api_version="v23.0",
+        meta_phone_number_id="1234567890123456",
+        meta_access_token="meta-access-token",
+        _env_file=None,
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        message_id = await MetaWhatsAppSender(settings=settings, http_client=client).send_document(
+            to="+234****5678",
+            body="Report",
+            filename="report.docx",
+            document_url="https://cdn.example.test/report.docx",
+        )
+
+    assert message_id == "wamid.link-doc"
+    sent = json.loads(requests[0].content)
+    assert sent["document"]["link"] == "https://cdn.example.test/report.docx"
+    assert "id" not in sent["document"]
+
+
+@pytest.mark.asyncio
+async def test_meta_sender_send_document_rejects_missing_url():
+    settings = Settings(
+        meta_graph_api_base_url="https://graph.example.test",
+        meta_graph_api_version="v23.0",
+        meta_phone_number_id="1234567890123456",
+        meta_access_token="meta-access-token",
+        _env_file=None,
+    )
+    with pytest.raises(ValueError, match="document_url"):
+        await MetaWhatsAppSender(settings=settings).send_document(
+            to="+234****5678", body="Report", filename="report.docx"
+        )

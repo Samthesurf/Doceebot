@@ -528,14 +528,27 @@ class WeeklyReportScheduler:
                 media_urls=[report.stored.url],
             )
         elif recipient.platform == "whatsapp_meta":
-            asyncio.run(
-                MetaWhatsAppSender(settings=self.settings).send_document(
-                    to=recipient.chat_id,
-                    body=caption,
-                    filename=report.path.name,
-                    document_url=report.stored.url,
+            sender = MetaWhatsAppSender(settings=self.settings)
+            # Prefer a public URL when storage provides one; otherwise upload the
+            # locally-stored DOCX to Meta and deliver it by media id (no CDN needed).
+            if report.stored is not None and report.stored.url:
+                asyncio.run(
+                    sender.send_document(
+                        to=recipient.chat_id,
+                        body=caption,
+                        filename=report.path.name,
+                        document_url=report.stored.url,
+                    )
                 )
-            )
+            else:
+                asyncio.run(
+                    sender.send_document_file(
+                        to=recipient.chat_id,
+                        body=caption,
+                        filename=report.path.name,
+                        document_path=report.path,
+                    )
+                )
         else:
             logger.warning("skipping weekly report for unknown platform %r", recipient.platform)
 

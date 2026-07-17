@@ -1,4 +1,5 @@
 import logging
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -142,17 +143,97 @@ class MetaWhatsAppSender:
             if owns_client:
                 await client.aclose()
 
-    async def send_document(
-        self, *, to: str, body: str, filename: str, document_url: str
+    async def upload_media(
+        self, *, data: bytes, content_type: str, filename: str
     ) -> str:
-        """Send a public DOCX URL as a WhatsApp document attachment."""
+        """Upload a file to Meta's media endpoint and return its media id.
 
+        Meta can deliver documents either by a public ``document.link`` URL or by a
+        media id obtained from this endpoint. Uploading is required when the file
+        lives in local storage (no public CDN URL), e.g. generated reports.
+        """
+        phone_number_id = self.settings.meta_phone_number_id
+        if not phone_number_id:
+            raise RuntimeError("META_PHONE_NUMBER_ID is not configured")
+        if not data:
+            raise ValueError("Meta media upload needs file bytes")
+
+        owns_client = self.http_client is None
+        client = self.http_client or httpx.AsyncClient(timeout=60.0)
+        try:
+            response = await client.post(
+                meta_graph_api_url(self.settings, phone_number_id, "media"),
+                headers=meta_auth_headers(self.settings),
+                files={
+                    "file": (filename, data, content_type or "application/octet-stream"),
+                    "messaging_product": (None, "whatsapp"),
+                    "type": (None, content_type or "application/octet-stream"),
+                },
+            )
+            if response.is_error:
+                raise MetaGraphApiError(_safe_graph_error_message(response))
+            payload: dict[str, Any] = response.json()
+        finally:
+            if owns_client:
+                await client.aclose()
+
+        media_id = payload.get("id")
+        if not media_id:
+            raise RuntimeError("Meta media upload response did not include an id")
+        return str(media_id)
+
+    async def send_document(
+        self, *, to: str, body: str, filename: str, document_url: str | None = None
+    ) -> str:
+        """Send a DOCX (or other document) as a WhatsApp attachment.
+
+        Provide ``document_url`` for a publicly reachable file, or call
+        :meth:`send_document_file` to upload a local file and send it by media id.
+        """
+        if document_url is None:
+            raise ValueError(
+                "send_document requires document_url; use send_document_file for local files"
+            )
+        return await self._post_document(to=to, body=body, filename=filename, link=document_url)
+
+    async def send_document_file(
+        self, *, to: str, body: str, filename: str, document_path: Path
+    ) -> str:
+        """Upload a local document and send it via its Meta media id (no public URL needed)."""
+        content_type = (
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        )
+        data = Path(document_path).read_bytes()
+        media_id = await self.upload_media(
+            data=data, content_type=content_type, filename=filename
+        )
+        return await self._post_document(
+            to=to, body=body, filename=filename, media_id=media_id
+        )
+
+    async def _post_document(
+        self,
+        *,
+        to: str,
+        body: str,
+        filename: str,
+        link: str | None = None,
+        media_id: str | None = None,
+    ) -> str:
         phone_number_id = self.settings.meta_phone_number_id
         if not phone_number_id:
             raise RuntimeError("META_PHONE_NUMBER_ID is not configured")
         recipient = "".join(char for char in str(to) if char.isdigit())
         if not recipient:
             raise ValueError("Meta WhatsApp recipient must contain a phone number")
+        if link is None and media_id is None:
+            raise ValueError("document delivery needs either a link or a media id")
+
+        document: dict[str, Any] = {"caption": body, "filename": filename}
+        if link is not None:
+            document["link"] = link
+        else:
+            document["id"] = media_id
 
         owns_client = self.http_client is None
         client = self.http_client or httpx.AsyncClient(timeout=30.0)
@@ -168,11 +249,7 @@ class MetaWhatsAppSender:
                     "recipient_type": "individual",
                     "to": recipient,
                     "type": "document",
-                    "document": {
-                        "link": document_url,
-                        "caption": body,
-                        "filename": filename,
-                    },
+                    "document": document,
                 },
             )
             if response.is_error:
