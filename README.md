@@ -11,7 +11,7 @@ The goal is to let the work happen where the worker already is, then give superv
 This repository has moved beyond the original webhook scaffold.
 
 - Twilio WhatsApp and Telegram adapters feed a shared inbound-event model.
-- The direct Meta WhatsApp Cloud API adapter has passed a real test-number conversation end to end.
+- The direct Meta WhatsApp Cloud API adapter has passed a real production-number conversation end to end.
 - Text, voice, image, document, and location messages have channel-specific parsing paths.
 - Tenant and permission checks happen before AI context and retrieval are built.
 - PostgreSQL and Alembic hold durable work records and message audit data.
@@ -20,7 +20,7 @@ This repository has moved beyond the original webhook scaffold.
 - Deterministic Python generators create DOCX reports and XLSX work logs.
 - The dashboard API and frontend provide an admin view into organizations, documents, logs, escalations, and token usage.
 
-The Meta integration is currently a test-account provider. It sits beside Twilio, not in place of it. Production-number migration is deliberately a separate decision.
+The Meta integration now runs on a verified production WhatsApp Business number (`+234 807 418 6515`) under an approved production WABA. It sits beside Twilio, not in place of it. Multi-channel history unification lets a person who first used Telegram keep their work memory when they later text the same bot on WhatsApp.
 
 ## The core loop
 
@@ -48,7 +48,7 @@ That order matters. The system should know which organization and permissions ap
 | --- | --- | --- |
 | Twilio WhatsApp | Existing WhatsApp provider | Kept as the default adapter |
 | Telegram | Chat and file channel | Separate adapter using the Telegram Bot API |
-| Meta Cloud API | Direct WhatsApp provider | Test-number conversation verified end to end |
+| Meta Cloud API | Direct WhatsApp provider | Production-number conversation verified end to end (`+234 807 418 6515`) |
 
 The adapters stay separate, then converge on shared `InboundEvent`, media, tenant, workflow, and document interfaces.
 
@@ -135,7 +135,7 @@ The backend deploy and the dashboard deploy are separate operations. The dashboa
 
 ## What comes next
 
-Production onboarding with a dedicated Doceebot phone number, a production WABA(Whatsapp Business Account), approved templates, and a deliberate decision about how Twilio remains in the architecture.
+The production phone number (`+234 807 418 6515`) and approved WABA are live, with end-to-end inbound and outbound messaging verified. A "session start" template is still pending approval so the bot can proactively reopen a conversation after the 24-hour window closes.
 
 The other work is the unglamorous part that makes the product trustworthy: stronger tenant onboarding, richer work corrections, supervisor summaries, media validation, and more document workflows.
 
