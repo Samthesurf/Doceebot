@@ -120,6 +120,27 @@ async def process_live_meta_event(
 
 async def process_deferred_meta_event(event: InboundEvent, *, settings: Settings) -> None:
     """Run a long Meta AI turn outside the FastAPI request event loop."""
+    sender = MetaWhatsAppSender(settings=settings)
+    # Show a read receipt + typing indicator before the (slow) AI turn runs, so
+    # the user sees the bot is preparing a reply. Meta auto-dismisses it when the
+    # reply is sent below, or after 25s. Best-effort: a failure must not block the
+    # real reply.
+    if (
+        settings.meta_typing_indicator_enabled
+        and event.platform_message_id
+        and event.platform_chat_id
+    ):
+        try:
+            await sender.send_typing_indicator(
+                to=event.platform_chat_id,
+                message_id=event.platform_message_id,
+            )
+        except Exception:
+            logger.warning(
+                "Meta typing indicator could not be sent for platform_message_id=%s",
+                event.platform_message_id,
+                exc_info=True,
+            )
 
     try:
         with get_session_factory(settings)() as db_session:
@@ -129,7 +150,7 @@ async def process_deferred_meta_event(event: InboundEvent, *, settings: Settings
                 db_session=db_session,
             )
         if reply_text:
-            await MetaWhatsAppSender(settings=settings).send_text(
+            await sender.send_text(
                 to=event.platform_chat_id,
                 body=reply_text,
             )

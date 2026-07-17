@@ -164,3 +164,57 @@ async def test_meta_media_downloader_rejects_missing_media_id():
 
     with pytest.raises(RuntimeError, match="platform_media_id"):
         await MetaMediaDownloader(settings).download(MediaRef(index=0))
+
+
+@pytest.mark.asyncio
+async def test_meta_sender_posts_read_receipt_and_typing_indicator():
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json={"success": True})
+
+    settings = Settings(
+        meta_graph_api_base_url="https://graph.example.test",
+        meta_graph_api_version="v23.0",
+        meta_phone_number_id="1234567890123456",
+        meta_access_token="meta-access-token",
+        _env_file=None,
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        await MetaWhatsAppSender(settings=settings, http_client=client).send_typing_indicator(
+            to="+234****5678",
+            message_id="wamid.HBgLMTY1MDM4Nzk0MzkVAgARGBJDQjZCMzlEQUE4OTJBMTE4RTUA",
+        )
+
+    assert len(requests) == 1
+    request = requests[0]
+    assert str(request.url) == "https://graph.example.test/v23.0/1234567890123456/messages"
+    assert request.headers["authorization"] == "Bearer meta-access-token"
+    assert json.loads(request.content) == {
+        "messaging_product": "whatsapp",
+        "status": "read",
+        "message_id": "whatsapp:wamid.HBgLMTY1MDM4Nzk0MzkVAgARGBJDQjZCMzlEQUE4OTJBMTE4RTUA",
+        "typing_indicator": {"type": "text"},
+    }
+
+
+@pytest.mark.asyncio
+async def test_meta_sender_typing_indicator_is_best_effort_on_failure():
+    # A failing typing indicator must not raise; the caller still sends the reply.
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, json={"error": {"message": "bad", "code": 1}})
+
+    settings = Settings(
+        meta_graph_api_base_url="https://graph.example.test",
+        meta_graph_api_version="v23.0",
+        meta_phone_number_id="1234567890123456",
+        meta_access_token="meta-access-token",
+        _env_file=None,
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        # Should not raise even though the API returns 400.
+        await MetaWhatsAppSender(settings=settings, http_client=client).send_typing_indicator(
+            to="+234****5678",
+            message_id="wamid.HBgLMTY1MDM4Nzk0MzkVAgARGBJDQjZCMzlEQUE4OTJBMTE4RTUA",
+        )

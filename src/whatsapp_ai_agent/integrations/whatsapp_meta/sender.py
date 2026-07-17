@@ -1,3 +1,4 @@
+import logging
 from typing import Any
 
 import httpx
@@ -7,6 +8,8 @@ from whatsapp_ai_agent.integrations.whatsapp_meta.client import (
     meta_auth_headers,
     meta_graph_api_url,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class MetaGraphApiError(RuntimeError):
@@ -92,6 +95,56 @@ class MetaWhatsAppSender:
         if not message_id:
             raise RuntimeError("Meta send response did not include a message id")
         return str(message_id)
+
+    async def send_typing_indicator(self, *, to: str, message_id: str) -> None:
+        """Mark an inbound message read and show a typing indicator on WhatsApp.
+
+        According to Meta's Cloud API, posting status=read with a typing_indicator
+        both marks the message as read (blue ticks) and shows the user a typing
+        bubble. Meta dismisses it automatically once the reply is sent, or after
+        25 seconds, whichever comes first. Only use it when a reply will follow.
+        """
+        phone_number_id = self.settings.meta_phone_number_id
+        if not phone_number_id:
+            raise RuntimeError("META_PHONE_NUMBER_ID is not configured")
+        recipient = "".join(char for char in str(to) if char.isdigit())
+        if not recipient:
+            raise ValueError("Typing indicator needs a WhatsApp recipient number")
+        # The read/typing status references the inbound message id verbatim
+        # (e.g. "wamid.HBgL..."), not a digit-only phone. Prefix it with
+        # "whatsapp:" only when Meta's format is not already present.
+        raw_message_id = str(message_id)
+        status_message_id = (
+            raw_message_id
+            if raw_message_id.startswith("whatsapp:")
+            else f"whatsapp:{raw_message_id}"
+        )
+
+        owns_client = self.http_client is None
+        client = self.http_client or httpx.AsyncClient(timeout=30.0)
+        try:
+            response = await client.post(
+                meta_graph_api_url(self.settings, phone_number_id, "messages"),
+                headers={
+                    **meta_auth_headers(self.settings),
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "messaging_product": "whatsapp",
+                    "status": "read",
+                    "message_id": status_message_id,
+                    "typing_indicator": {"type": "text"},
+                },
+            )
+            if response.is_error:
+                # Typing is best-effort: never block the real reply on its failure.
+                logger.warning(
+                    "Meta typing indicator failed (non-fatal): %s",
+                    _safe_graph_error_message(response),
+                )
+        finally:
+            if owns_client:
+                await client.aclose()
 
     async def send_document(
         self, *, to: str, body: str, filename: str, document_url: str

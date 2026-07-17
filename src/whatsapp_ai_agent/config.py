@@ -96,6 +96,11 @@ class Settings(BaseSettings):
     weekly_report_time_minute: int = Field(default=0, ge=0, le=59)
     weekly_report_timezone: str = "Africa/Lagos"
 
+    # When enabled, inbound Meta WhatsApp messages trigger a "read receipt +
+    # typing indicator" before the (slow) AI turn runs, so the user sees the
+    # bot is preparing a reply. Meta auto-dismisses it on reply or after 25s.
+    meta_typing_indicator_enabled: bool = True
+
     @property
     def is_production(self) -> bool:
         return self.app_env == "production"
