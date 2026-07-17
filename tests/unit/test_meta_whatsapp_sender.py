@@ -194,7 +194,7 @@ async def test_meta_sender_posts_read_receipt_and_typing_indicator():
     assert json.loads(request.content) == {
         "messaging_product": "whatsapp",
         "status": "read",
-        "message_id": "whatsapp:wamid.HBgLMTY1MDM4Nzk0MzkVAgARGBJDQjZCMzlEQUE4OTJBMTE4RTUA",
+        "message_id": "wamid.HBgLMTY1MDM4Nzk0MzkVAgARGBJDQjZCMzlEQUE4OTJBMTE4RTUA",
         "typing_indicator": {"type": "text"},
     }
 

@@ -110,15 +110,11 @@ class MetaWhatsAppSender:
         recipient = "".join(char for char in str(to) if char.isdigit())
         if not recipient:
             raise ValueError("Typing indicator needs a WhatsApp recipient number")
-        # The read/typing status references the inbound message id verbatim
-        # (e.g. "wamid.HBgL..."), not a digit-only phone. Prefix it with
-        # "whatsapp:" only when Meta's format is not already present.
-        raw_message_id = str(message_id)
-        status_message_id = (
-            raw_message_id
-            if raw_message_id.startswith("whatsapp:")
-            else f"whatsapp:{raw_message_id}"
-        )
+        # The read/typing status must reference the inbound message id verbatim
+        # (e.g. "wamid.HBgL..."). Meta's Cloud API does NOT accept the
+        # "whatsapp:"-prefixed form here (unlike media IDs); sending the prefix
+        # yields a #131009 "Parameter value is not valid" error.
+        status_message_id = str(message_id)
 
         owns_client = self.http_client is None
         client = self.http_client or httpx.AsyncClient(timeout=30.0)
