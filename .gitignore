@@ -17,6 +17,8 @@ node_modules/
 .env
 .env.*
 !.env.example
+# SCP'd credential bundles from the Doceebot VPS (e.g. root@<ip>), contain Wrangler auth
+root@*
 storage/media/*
 storage/generated/*
 storage/templates/*
