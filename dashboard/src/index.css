@@ -285,11 +285,14 @@ p {
 }
 
 .btn-primary {
-  background: var(--brown-700);
+  background-color: var(--brown-700);
+  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0));
   color: white;
+  box-shadow: 0 1px 2px rgba(14, 18, 27, 0.24);
 }
 .btn-primary:hover {
-  background: var(--brown-800);
+  background-color: var(--brown-800);
+  box-shadow: 0 1px 2px rgba(14, 18, 27, 0.24), 0 0 0 1px #288DFF;
   transform: translateY(-1px);
 }
 .btn-primary:active {
@@ -300,10 +303,12 @@ p {
   background: var(--bg-cream-dark);
   color: var(--brown-700);
   border-color: var(--brown-100);
+  box-shadow: 0 1px 2px rgba(14, 18, 27, 0.24);
 }
 .btn-secondary:hover {
   background: var(--brown-100);
   color: var(--brown-900);
+  box-shadow: 0 1px 2px rgba(14, 18, 27, 0.24), 0 0 0 1px #288DFF;
 }
 
 .btn-danger {
@@ -776,10 +781,10 @@ p {
 }
 
 .google-button:hover {
-  border-color: var(--brown-300);
+  border-color: #288DFF;
   background: white;
   transform: translateY(-1px);
-  box-shadow: var(--shadow-md);
+  box-shadow: 0 1px 2px rgba(14, 18, 27, 0.24), 0 0 0 1px #288DFF;
 }
 
 .google-button:disabled {
