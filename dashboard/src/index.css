@@ -179,6 +179,7 @@ p {
 .sidebar-logo {
   display: flex;
   align-items: center;
+  gap: 0.75rem;
   font-family: var(--font-display);
   font-size: 1.5rem;
   font-weight: 700;
