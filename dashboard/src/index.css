@@ -193,10 +193,6 @@ p {
   color: var(--accent-gold);
 }
 
-.sidebar-logo span {
-  color: var(--accent-gold);
-}
-
 .sidebar-nav {
   display: flex;
   flex-direction: column;
