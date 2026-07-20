@@ -419,7 +419,8 @@ def test_dashboard_admin_can_merge_users_and_unify_history(tmp_path):
 
     # Source user gone; its work log now belongs to the target.
     with Session() as session:
-        from sqlalchemy import func as _func, select as _select
+        from sqlalchemy import func as _func
+        from sqlalchemy import select as _select
 
         assert session.get(User, src_id) is None
         assert (

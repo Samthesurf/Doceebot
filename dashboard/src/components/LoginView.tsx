@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Cpu, Eye, EyeOff, KeyRound, Lock, Mail, ShieldAlert } from 'lucide-react';
+import { Cpu, Eye, EyeOff, KeyRound, Mail, ShieldAlert } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { isFirebaseConfigured } from '../firebase';
 
@@ -47,7 +47,13 @@ export const LoginView: React.FC = () => {
     <div className="login-container">
       <div className="glass-card login-card fade-in">
         <div className="login-icon">
-          <Lock size={32} />
+          <img
+            src={`${import.meta.env.BASE_URL}doceebot-icon.svg`}
+            alt="Doceebot"
+            width={56}
+            height={56}
+            style={{ borderRadius: 14 }}
+          />
         </div>
 
         <h1>Doceebot</h1>

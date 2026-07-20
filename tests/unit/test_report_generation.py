@@ -96,12 +96,15 @@ async def test_generated_report_uses_twelve_point_times_new_roman(tmp_path):
         use_llm=False,
     )
     document = Document(str(files[0].path))
+    # Only assert font rules on text runs; the logo is an embedded picture run
+    # with no text font/size of its own.
     runs = [run for paragraph in document.paragraphs for run in paragraph.runs]
+    text_runs = [run for run in runs if run.text.strip()]
 
     assert runs
-    assert all(run.font.name == "Times New Roman" for run in runs)
-    assert all(run.font.size is not None and run.font.size.pt == 12 for run in runs)
-    assert all(run.font.color is not None and run.font.color.rgb == (0, 0, 0) for run in runs)
+    assert all(run.font.name == "Times New Roman" for run in text_runs)
+    assert all(run.font.size is not None and run.font.size.pt == 12 for run in text_runs)
+    assert all(run.font.color is not None and run.font.color.rgb == (0, 0, 0) for run in text_runs)
 
 
 @pytest.mark.asyncio

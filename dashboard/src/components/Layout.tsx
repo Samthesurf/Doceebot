@@ -40,6 +40,13 @@ export const Layout: React.FC<LayoutProps> = ({ children, currentPath, onNavigat
       {/* Mobile Header */}
       <div className="mobile-header">
         <div className="sidebar-logo" style={{ marginBottom: 0 }}>
+          <img
+            src={`${import.meta.env.BASE_URL}doceebot-icon.svg`}
+            alt="Doceebot"
+            width={28}
+            height={28}
+            style={{ borderRadius: 7, flexShrink: 0 }}
+          />
           Docee<span>bot</span>
         </div>
         <button 
@@ -122,6 +129,13 @@ export const Layout: React.FC<LayoutProps> = ({ children, currentPath, onNavigat
       {/* Desktop Sidebar */}
       <aside className="sidebar">
         <div className="sidebar-logo">
+          <img
+            src={`${import.meta.env.BASE_URL}doceebot-icon.svg`}
+            alt="Doceebot"
+            width={32}
+            height={32}
+            style={{ borderRadius: 8, flexShrink: 0 }}
+          />
           Docee<span>bot</span>
         </div>
 

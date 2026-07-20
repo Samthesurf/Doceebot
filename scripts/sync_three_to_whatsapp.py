@@ -10,7 +10,6 @@ separate WhatsApp-only row already exists for that number.
 """
 
 from whatsapp_ai_agent.config import get_settings
-from whatsapp_ai_agent.db.models import User
 from whatsapp_ai_agent.db.session import get_session_factory
 from whatsapp_ai_agent.db.users_repository import (
     find_telegram_only_users,

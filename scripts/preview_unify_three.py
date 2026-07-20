@@ -7,7 +7,6 @@ exists, a merge is required instead.
 """
 
 from whatsapp_ai_agent.config import get_settings
-from whatsapp_ai_agent.db.models import User
 from whatsapp_ai_agent.db.session import get_session_factory
 from whatsapp_ai_agent.db.users_repository import (
     find_telegram_only_users,
@@ -38,10 +37,12 @@ def main() -> None:
             print(f"    target WA phone       : {wa_phone}")
             if wa_rows:
                 for r in wa_rows:
-                    print(
-                        f"    !! separate WA row exists: id={r.id} tg={r.telegram_user_id} phone={r.phone_number}"
+                    msg = (
+                        f"    !! separate WA row exists: "
+                        f"id={r.id} tg={r.telegram_user_id} phone={r.phone_number}"
                     )
-                print(f"    -> ACTION: MERGE separate WA row into this Telegram row\n")
+                    print(msg)
+                print("    -> ACTION: MERGE separate WA row into this Telegram row\n")
             else:
                 print(f"    -> ACTION: SET phone_number={wa_phone} on this row (no merge)\n")
 

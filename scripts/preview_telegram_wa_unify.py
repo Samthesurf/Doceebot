@@ -11,15 +11,12 @@ Run:
 
 from __future__ import annotations
 
-import os
-
-from sqlalchemy import create_engine, select
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy import select
 
 from whatsapp_ai_agent.config import get_settings
-from whatsapp_ai_agent.db.models import Membership, Organization, User
-from whatsapp_ai_agent.db.users_repository import find_telegram_only_users
+from whatsapp_ai_agent.db.models import Membership, Organization
 from whatsapp_ai_agent.db.session import get_session_factory
+from whatsapp_ai_agent.db.users_repository import find_telegram_only_users
 
 
 def _session():

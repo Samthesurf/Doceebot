@@ -4,13 +4,16 @@ from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
-from docx.shared import Pt, RGBColor
+from docx.shared import Inches, Pt, RGBColor
 
 from whatsapp_ai_agent.documents.schemas import ReportSpec
 
 _FONT_NAME = "Times New Roman"
 _FONT_SIZE = Pt(12)
 _BLACK = RGBColor(0, 0, 0)
+
+_LOGO_PATH = Path(__file__).parent / "assets" / "doceebot_logo.png"
+_LOGO_WIDTH = Inches(1.0)
 
 
 def _force_font(style) -> None:  # noqa: ANN001 - python-docx style type is dynamic
@@ -86,6 +89,12 @@ def _clean_text(value: str) -> str:
 def generate_docx_report(spec: ReportSpec, output_path: Path) -> Path:
     document = Document()
     _style_document(document)
+    if _LOGO_PATH.exists():
+        logo_paragraph = document.add_paragraph()
+        logo_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        logo_run = logo_paragraph.add_run()
+        logo_run.add_picture(str(_LOGO_PATH), width=_LOGO_WIDTH)
+
     title_text = _clean_text(spec.title)
     document.core_properties.title = title_text
     document.core_properties.author = "Doceebot"
