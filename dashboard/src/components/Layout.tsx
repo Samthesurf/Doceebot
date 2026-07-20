@@ -47,9 +47,9 @@ export const Layout: React.FC<LayoutProps> = ({ children, currentPath, onNavigat
             height={28}
             style={{ borderRadius: 7, flexShrink: 0 }}
           />
-          Docee<span>bot</span>
+          <span className="brand-word">Docee<span>bot</span></span>
         </div>
-        <button 
+        <button
           style={{ background: 'none', border: 'none', color: 'var(--brown-700)', cursor: 'pointer' }}
           onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
         >
@@ -136,7 +136,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, currentPath, onNavigat
             height={32}
             style={{ borderRadius: 8, flexShrink: 0 }}
           />
-          Docee<span>bot</span>
+          <span className="brand-word">Docee<span>bot</span></span>
         </div>
 
         <nav className="sidebar-nav">

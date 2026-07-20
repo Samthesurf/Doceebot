@@ -186,6 +186,12 @@ p {
   color: var(--brown-700);
   margin-bottom: 3rem;
 }
+.sidebar-logo .brand-word {
+  display: inline;
+}
+.sidebar-logo .brand-word span {
+  color: var(--accent-gold);
+}
 
 .sidebar-logo span {
   color: var(--accent-gold);
