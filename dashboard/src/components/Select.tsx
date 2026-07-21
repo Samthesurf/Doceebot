@@ -51,7 +51,7 @@ export default function Select({
 
   const cls = [
     'custom-select-root',
-    className || 'form-select',
+    className,
     open ? 'custom-select-open' : '',
   ]
     .filter(Boolean)

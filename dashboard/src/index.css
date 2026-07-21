@@ -624,6 +624,11 @@ p {
 }
 
 /* Custom Select (div-based dropdown) */
+.custom-select-root {
+  width: 100%;
+  font-family: var(--font-body);
+  font-size: 0.9rem;
+}
 .custom-select-root .custom-select-trigger {
   display: flex;
   align-items: center;
