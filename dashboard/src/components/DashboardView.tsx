@@ -874,7 +874,7 @@ export const DashboardView: React.FC = () => {
             </div>
 
             {/* Admin Email Linking Section */}
-            <div className="glass-card" style={{ marginTop: '2rem', borderLeft: '4px solid var(--accent-gold)' }}>
+            <div className="glass-card" style={{ marginTop: '2rem' }}>
               <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem', fontSize: '1.15rem' }}>
                 <Link2 size={18} style={{ color: 'var(--brown-700)' }} />
                 Link Dashboard Admin Email
