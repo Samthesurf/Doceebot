@@ -1,6 +1,7 @@
 /* oxlint-disable react-hooks/exhaustive-deps */
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import Select from './Select';
 import {
   getOverview,
   getOrganizations,
@@ -837,18 +838,17 @@ export const DashboardView: React.FC = () => {
 
                       <div>
                         <label className="form-label" htmlFor="form-role">Authorization Role <span style={{ color: 'var(--status-error-text)' }}>*</span></label>
-                        <select
-                          id="form-role"
-                          className="form-select"
+                        <Select
                           value={formRole}
-                          onChange={(e) => setFormRole(e.target.value as any)}
-                          required
-                        >
-                          <option value="worker">Worker</option>
-                          <option value="supervisor">Supervisor</option>
-                          <option value="manager">Manager</option>
-                          <option value="org_admin">Org Admin</option>
-                        </select>
+                          onChange={(v) => setFormRole(v as any)}
+                          options={[
+                            { value: 'worker', label: 'Worker' },
+                            { value: 'supervisor', label: 'Supervisor' },
+                            { value: 'manager', label: 'Manager' },
+                            { value: 'org_admin', label: 'Org Admin' },
+                          ]}
+                          placeholder="Select role"
+                        />
                       </div>
 
                       <div>
@@ -981,18 +981,17 @@ export const DashboardView: React.FC = () => {
 
                 <div>
                   <label className="form-label" htmlFor="link-role">Authorization Role <span style={{ color: 'var(--status-error-text)' }}>*</span></label>
-                  <select
-                    id="link-role"
-                    className="form-select"
+                  <Select
                     value={linkRole}
-                    onChange={(e) => setLinkRole(e.target.value as any)}
-                    required
-                  >
-                    <option value="org_admin">Org Admin</option>
-                    <option value="manager">Manager</option>
-                    <option value="supervisor">Supervisor</option>
-                    <option value="worker">Worker</option>
-                  </select>
+                    onChange={(v) => setLinkRole(v as any)}
+                    options={[
+                      { value: 'org_admin', label: 'Org Admin' },
+                      { value: 'manager', label: 'Manager' },
+                      { value: 'supervisor', label: 'Supervisor' },
+                      { value: 'worker', label: 'Worker' },
+                    ]}
+                    placeholder="Select role"
+                  />
                 </div>
 
                 <div>
