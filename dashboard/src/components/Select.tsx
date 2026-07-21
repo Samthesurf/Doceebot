@@ -12,6 +12,7 @@ interface SelectProps {
   placeholder?: string;
   style?: React.CSSProperties;
   className?: string;
+  disabled?: boolean;
 }
 
 export default function Select({
@@ -21,6 +22,7 @@ export default function Select({
   placeholder = 'Select...',
   style,
   className,
+  disabled = false,
 }: SelectProps) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -60,9 +62,10 @@ export default function Select({
       <button
         type="button"
         className="custom-select-trigger"
-        onClick={() => setOpen(!open)}
+        onClick={() => !disabled && setOpen(!open)}
         aria-haspopup="listbox"
         aria-expanded={open}
+        disabled={disabled}
       >
         <span style={{ color: selected ? 'var(--brown-900)' : 'var(--brown-400)' }}>
           {selected ? selected.label : placeholder}

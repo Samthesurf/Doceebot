@@ -597,12 +597,9 @@ export const DashboardView: React.FC = () => {
                   <div className="glass-card member-admin-card">
                     <div>
                       <label className="form-label" htmlFor="admin-org-select">Manage Organization</label>
-                      <select
-                        id="admin-org-select"
-                        className="form-select"
+                      <Select
                         value={selectedOrgId}
-                        onChange={(e) => {
-                          const orgId = e.target.value;
+                        onChange={(orgId) => {
                           setSelectedOrgId(orgId);
                           setFormOrgId(orgId);
                           if (orgId) {
@@ -613,14 +610,14 @@ export const DashboardView: React.FC = () => {
                           setFormSuccess(null);
                           setFormError(null);
                         }}
-                      >
-                        <option value="">-- Select an Organization --</option>
-                        {adminAccess?.organizations.map((org) => (
-                          <option key={org.id} value={org.id}>
-                            {org.name} ({formatRoleLabel(org.role)})
-                          </option>
-                        ))}
-                      </select>
+                        options={[
+                          ...(adminAccess?.organizations ?? []).map((org) => ({
+                            value: org.id,
+                            label: `${org.name} (${formatRoleLabel(org.role)})`,
+                          })),
+                        ]}
+                        placeholder="-- Select an Organization --"
+                      />
                     </div>
 
                     {selectedOrgId ? (
@@ -779,43 +776,32 @@ export const DashboardView: React.FC = () => {
                     <form onSubmit={handleFormSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
                       <div>
                         <label className="form-label" htmlFor="form-org-id">Target Organization <span style={{ color: 'var(--status-error-text)' }}>*</span></label>
-                        <select
-                          id="form-org-id"
-                          className="form-select"
+                        <Select
                           value={formOrgId}
-                          onChange={(e) => {
-                            const val = e.target.value;
+                          onChange={(val) => {
                             setFormOrgId(val);
                             setSelectedOrgId(val);
-                            if (val) {
-                              fetchMembers(val);
-                            } else {
-                              setMembers([]);
-                            }
+                            if (val) { fetchMembers(val); } else { setMembers([]); }
                           }}
-                          required
-                        >
-                          <option value="">-- Choose Organization --</option>
-                          {adminAccess?.organizations.map((org) => (
-                            <option key={org.id} value={org.id}>
-                              {org.name}
-                            </option>
-                          ))}
-                        </select>
+                          options={(adminAccess?.organizations ?? []).map((org) => ({
+                            value: org.id,
+                            label: org.name,
+                          }))}
+                          placeholder='-- Choose Organization --'
+                        />
                       </div>
 
                       <div>
                         <label className="form-label" htmlFor="form-platform">Platform Channel <span style={{ color: 'var(--status-error-text)' }}>*</span></label>
-                        <select
-                          id="form-platform"
-                          className="form-select"
+                        <Select
                           value={formPlatform}
-                          onChange={(e) => setFormPlatform(e.target.value as 'whatsapp' | 'telegram')}
-                          required
-                        >
-                          <option value="whatsapp">WhatsApp number</option>
-                          <option value="telegram">Telegram user ID</option>
-                        </select>
+                          onChange={(v) => setFormPlatform(v as 'whatsapp' | 'telegram')}
+                          options={[
+                            { value: 'whatsapp', label: 'WhatsApp number' },
+                            { value: 'telegram', label: 'Telegram user ID' },
+                          ]}
+                          placeholder='Select channel'
+                        />
                       </div>
 
                       <div>
@@ -918,18 +904,15 @@ export const DashboardView: React.FC = () => {
               <form onSubmit={handleLinkEmailSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
                 <div>
                   <label className="form-label" htmlFor="link-org-id">Target Organization <span style={{ color: 'var(--status-error-text)' }}>*</span></label>
-                  <select
-                    id="link-org-id"
-                    className="form-select"
+                  <Select
                     value={linkOrgId}
-                    onChange={(e) => setLinkOrgId(e.target.value)}
-                    required
-                  >
-                    <option value="">-- Choose Organization --</option>
-                    {adminAccess?.organizations.map((org) => (
-                      <option key={org.id} value={org.id}>{org.name}</option>
-                    ))}
-                  </select>
+                    onChange={setLinkOrgId}
+                    options={(adminAccess?.organizations ?? []).map((org) => ({
+                      value: org.id,
+                      label: org.name,
+                    }))}
+                    placeholder='-- Choose Organization --'
+                  />
                 </div>
 
                 <div>
@@ -947,16 +930,15 @@ export const DashboardView: React.FC = () => {
 
                 <div>
                   <label className="form-label" htmlFor="link-platform">Bot User Platform <span style={{ color: 'var(--status-error-text)' }}>*</span></label>
-                  <select
-                    id="link-platform"
-                    className="form-select"
+                  <Select
                     value={linkPlatform}
-                    onChange={(e) => setLinkPlatform(e.target.value as 'whatsapp' | 'telegram')}
-                    required
-                  >
-                    <option value="whatsapp">WhatsApp number</option>
-                    <option value="telegram">Telegram user ID</option>
-                  </select>
+                    onChange={(v) => setLinkPlatform(v as 'whatsapp' | 'telegram')}
+                    options={[
+                      { value: 'whatsapp', label: 'WhatsApp number' },
+                      { value: 'telegram', label: 'Telegram user ID' },
+                    ]}
+                    placeholder='Select channel'
+                  />
                 </div>
 
                 <div>
@@ -1035,32 +1017,27 @@ export const DashboardView: React.FC = () => {
             <div style={{ display: 'flex', gap: '1rem', marginBottom: '1.5rem', flexWrap: 'wrap' }}>
               <div style={{ flex: 1, minWidth: '200px' }}>
                 <label className="form-label">Filter by Organization</label>
-                <select
-                  className="form-select"
+                <Select
                   value={docOrgFilter}
-                  onChange={(e) => setDocOrgFilter(e.target.value)}
-                >
-                  <option value="">All Organizations</option>
-                  {organizations.map((o) => (
-                    <option key={o.id} value={o.id}>
-                      {o.name}
-                    </option>
-                  ))}
-                </select>
+                  onChange={setDocOrgFilter}
+                  options={organizations.map((o) => ({ value: o.id, label: o.name }))}
+                  placeholder="All Organizations"
+                />
               </div>
               <div style={{ flex: 1, minWidth: '200px' }}>
                 <label className="form-label">Filter by Status</label>
-                <select
-                  className="form-select"
+                <Select
                   value={docStatusFilter}
-                  onChange={(e) => setDocStatusFilter(e.target.value)}
-                >
-                  <option value="">All Statuses</option>
-                  <option value="processed">Processed</option>
-                  <option value="processing">Processing</option>
-                  <option value="failed">Failed</option>
-                  <option value="generated">Generated</option>
-                </select>
+                  onChange={setDocStatusFilter}
+                  options={[
+                    { value: '', label: 'All Statuses' },
+                    { value: 'processed', label: 'Processed' },
+                    { value: 'processing', label: 'Processing' },
+                    { value: 'failed', label: 'Failed' },
+                    { value: 'generated', label: 'Generated' },
+                  ]}
+                  placeholder="All Statuses"
+                />
               </div>
             </div>
 
@@ -1122,16 +1099,17 @@ export const DashboardView: React.FC = () => {
             <div style={{ display: 'flex', gap: '1rem', marginBottom: '1.5rem', maxWidth: '300px' }}>
               <div style={{ width: '100%' }}>
                 <label className="form-label">Filter by Status</label>
-                <select
-                  className="form-select"
+                <Select
                   value={escStatusFilter}
-                  onChange={(e) => setEscStatusFilter(e.target.value)}
-                >
-                  <option value="">All Escalations</option>
-                  <option value="pending">Pending</option>
-                  <option value="failed">Failed</option>
-                  <option value="resolved">Resolved</option>
-                </select>
+                  onChange={setEscStatusFilter}
+                  options={[
+                    { value: '', label: 'All Escalations' },
+                    { value: 'pending', label: 'Pending' },
+                    { value: 'failed', label: 'Failed' },
+                    { value: 'resolved', label: 'Resolved' },
+                  ]}
+                  placeholder="All Escalations"
+                />
               </div>
             </div>
 

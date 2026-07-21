@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, BarChart3, Clock3, Cpu, Gauge, RefreshCw, WalletCards } from 'lucide-react';
 import { getTokenUsage } from '../api';
 import { useAuth } from '../contexts/AuthContext';
+import Select from './Select';
 import type { TokenUsageBreakdownRow, TokenUsageDailyRow, TokenUsageResponse } from '../types';
 
 const TOKEN_WINDOWS = [7, 30, 90, 365];
@@ -163,18 +164,13 @@ export const TokenUsageView: React.FC = () => {
           <p>Monitor LLM consumption by model, purpose, day, and recent audit request.</p>
         </div>
         <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'center' }}>
-          <select
-            className="form-select"
-            value={windowDays}
-            onChange={(event) => setWindowDays(Number(event.target.value))}
+          <Select
+            value={String(windowDays)}
+            onChange={(v) => setWindowDays(Number(v))}
+            options={TOKEN_WINDOWS.map((days) => ({ value: String(days), label: `Last ${days} days` }))}
             style={{ width: '160px' }}
-          >
-            {TOKEN_WINDOWS.map((days) => (
-              <option key={days} value={days}>
-                Last {days} days
-              </option>
-            ))}
-          </select>
+            placeholder="Select range"
+          />
           <button className="btn btn-secondary" onClick={() => setRefreshKey((key) => key + 1)}>
             <RefreshCw size={16} />
             Refresh

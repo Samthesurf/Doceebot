@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Search, User, AlertTriangle, ListFilter, ClipboardList, MessageSquare, History, ArrowRight, ExternalLink } from 'lucide-react';
 import { getOrganizations, searchSessions } from '../api';
 import { useAuth } from '../contexts/AuthContext';
+import Select from './Select';
 import type { OrganizationDashboardRow, SessionSearchResultRow } from '../types';
 
 const RESULT_TYPE_ORDER = ['work_log', 'turn', 'session'] as const;
@@ -221,40 +222,28 @@ export const SearchView: React.FC = () => {
 
             <div>
               <label className="form-label">Organization</label>
-              <div style={{ position: 'relative' }}>
-                <select
-                  className="form-select"
-                  value={orgId}
-                  onChange={(e) => setOrgId(e.target.value)}
-                  disabled={loadingOrgs}
-                  required
-                >
-                  {loadingOrgs ? (
-                    <option>Loading tenants...</option>
-                  ) : (
-                    organizations.map((org) => (
-                      <option key={org.id} value={org.id}>
-                        {org.name}
-                      </option>
-                    ))
-                  )}
-                </select>
-              </div>
+              <Select
+                value={orgId}
+                onChange={setOrgId}
+                options={organizations.map((org: any) => ({ value: org.id, label: org.name }))}
+                placeholder={loadingOrgs ? 'Loading tenants...' : 'All Organizations'}
+                disabled={loadingOrgs}
+              />
             </div>
 
             <div>
               <label className="form-label">Result Limit</label>
-              <select
-                className="form-select"
-                value={limit}
-                onChange={(e) => setLimit(Number(e.target.value))}
-                disabled={loadingOrgs}
-              >
-                <option value={5}>Top 5 results</option>
-                <option value={10}>Top 10 results</option>
-                <option value={20}>Top 20 results</option>
-                <option value={50}>Top 50 results</option>
-              </select>
+              <Select
+                value={String(limit)}
+                onChange={(v) => setLimit(Number(v))}
+                options={[
+                  { value: '5', label: 'Top 5 results' },
+                  { value: '10', label: 'Top 10 results' },
+                  { value: '20', label: 'Top 20 results' },
+                  { value: '50', label: 'Top 50 results' },
+                ]}
+                placeholder="Select limit"
+              />
             </div>
           </div>
 
